@@ -4,6 +4,12 @@ services:
   bridge:
     build: .
     command: node bridge/bridge.js --port 3100 --session ./auth_state --media ./data/media
+    environment:
+      # The inbox container is a different network namespace, so the bridge has
+      # to listen on all interfaces INSIDE the container. It stays private: this
+      # service publishes no ports, so it is reachable only on the compose
+      # network, by the inbox.
+      BRIDGE_BIND: 0.0.0.0
     restart: unless-stopped
     # ONE bridge process per number, always. Two clients fight over the rotating
     # session keys and WhatsApp force-logs-out the device — so no scaling here,

@@ -65,6 +65,7 @@ const WHATSAPP_DEBUG =
 const PORT = parseInt(getArg('port', '3100'), 10);
 const SESSION_DIR = getArg('session', path.resolve('auth_state'));
 const MEDIA_DIR = getArg('media', path.resolve('data', 'media'));
+const BIND = getArg('bind', process.env.BRIDGE_BIND || '127.0.0.1');
 const PAIR_ONLY = args.includes('--pair-only');
 
 function normalizeWhatsAppId(value) {
@@ -981,8 +982,12 @@ if (PAIR_ONLY) {
   console.log();
   startSocket();
 } else {
-  app.listen(PORT, '127.0.0.1', () => {
-    console.log(`🌉 WhatsApp bridge listening on 127.0.0.1:${PORT} (mirror mode)`);
+  // Loopback by default: on a single host the bridge must not be reachable from
+  // the network. In containers the inbox is a SEPARATE network namespace, so
+  // 127.0.0.1 makes it unreachable — compose sets BRIDGE_BIND=0.0.0.0, which is
+  // still private to the compose network (the service publishes no ports).
+  app.listen(PORT, BIND, () => {
+    console.log(`🌉 WhatsApp bridge listening on ${BIND}:${PORT} (mirror mode)`);
     console.log(`📁 Session stored in: ${SESSION_DIR}`);
     console.log();
     startSocket();
