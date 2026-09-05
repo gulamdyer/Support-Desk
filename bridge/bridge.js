@@ -250,6 +250,7 @@ let connectionState = 'disconnected';
 // reachable over HTTP, not only printed to a terminal nobody is watching.
 let currentQr = null;      // data: URL of the QR that is valid right now
 let linkedNumber = null;
+let sockRegistered = false;  // true once creds exist: changes how we back off
 // Progressive reconnect backoff (fix A, 2026-07-13): fixed 3s retries hammer
 // WhatsApp and pattern-match to bot behaviour → raises flag/logout risk.
 let reconnectAttempts = 0;
@@ -339,6 +340,7 @@ async function openSocket() {
   // (Linked Devices → Link a device → "Link with phone number instead").
   const PAIR_NUMBER = (process.env.WHATSAPP_PAIR_NUMBER || '').replace(/[^0-9]/g, '');
   const usePairingCode = PAIR_NUMBER.length > 0 && !state.creds.registered;
+  sockRegistered = !!state.creds.registered;
   let pairingRequested = false;
 
   // Request ONE 8-char pairing code for this socket's lifetime and surface it
@@ -449,6 +451,10 @@ async function openSocket() {
     if (connection === 'close') {
       const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
       connectionState = 'disconnected';
+      // The code on screen belongs to THIS socket. Once it closes the code is
+      // dead, and scanning it gives the phone "couldn't link, try again later".
+      // Drop it so the UI shows "preparing" until a live one arrives.
+      currentQr = null;
 
       if (reason === DisconnectReason.loggedOut) {
         // Exiting here used to make relinking a server-shell job. The admin can
@@ -466,8 +472,14 @@ async function openSocket() {
         // hammer WhatsApp and pattern-match to bot behaviour → flag/logout risk.
         // Counter resets on a successful open.
         reconnectAttempts += 1;
-        const delayMs = Math.min(3000 * Math.pow(2, reconnectAttempts - 1), 60000);
-        console.log(`⚠️  Connection closed (reason: ${reason}). Reconnecting in ${Math.round(delayMs / 1000)}s (attempt ${reconnectAttempts})...`);
+        // Backoff protects a REGISTERED session from hammering WhatsApp. While
+        // the device is still unlinked, someone is watching the screen waiting
+        // to scan: a 60s gap there just means a minute of no usable QR code.
+        const waitingToPair = !sockRegistered;
+        const delayMs = waitingToPair
+          ? 3000
+          : Math.min(3000 * Math.pow(2, reconnectAttempts - 1), 60000);
+        console.log(`⚠️  Connection closed (reason: ${reason}). Reconnecting in ${Math.round(delayMs / 1000)}s (attempt ${reconnectAttempts})${waitingToPair ? ' — waiting to pair, retrying fast' : ''}...`);
         scheduleReconnect(delayMs);
       }
     } else if (connection === 'open') {
