@@ -475,9 +475,12 @@ async function openSocket() {
         // Backoff protects a REGISTERED session from hammering WhatsApp. While
         // the device is still unlinked, someone is watching the screen waiting
         // to scan: a 60s gap there just means a minute of no usable QR code.
+        // 10s while waiting to pair: fast enough that a fresh QR is always on
+        // screen, slow enough that we are not hammering WhatsApp from an IP it
+        // may already be unhappy about. Backoff still applies once registered.
         const waitingToPair = !sockRegistered;
         const delayMs = waitingToPair
-          ? 3000
+          ? 10000
           : Math.min(3000 * Math.pow(2, reconnectAttempts - 1), 60000);
         console.log(`⚠️  Connection closed (reason: ${reason}). Reconnecting in ${Math.round(delayMs / 1000)}s (attempt ${reconnectAttempts})${waitingToPair ? ' — waiting to pair, retrying fast' : ''}...`);
         scheduleReconnect(delayMs);
