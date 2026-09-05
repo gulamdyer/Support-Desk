@@ -1,0 +1,21 @@
+{
+  "name": "whatsapp-inbox",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared WhatsApp inbox \u2014 mirrors a phone-app number into a web UI for the support team",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/server.js",
+    "bridge": "node --env-file-if-exists=.env bridge/bridge.js --port 3100 --session ./auth_state --media ./data/media",
+    "link": "node --env-file-if-exists=.env bridge/bridge.js --pair-only --session ./auth_state",
+    "user": "node --env-file-if-exists=.env src/adduser.js",
+    "test": "node src/gate.test.js",
+    "backup": "node --env-file-if-exists=.env src/backup.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}

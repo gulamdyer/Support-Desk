@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Support Inbox</title>
+<link rel="stylesheet" href="/style.css">
+
+<!-- Installable on a phone: Add to Home Screen / Chrome's install prompt. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0f7a6c" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0c1116" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<!-- iOS has no install prompt of its own; these make Share → Add to Home Screen
+     open full-screen with the right icon and title instead of a browser tab. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Inbox">
+</head>
+<body>
+
+<div id="loginPage" class="login-page" hidden>
+  <form id="login" class="login">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.7 14.9L2 22l5.3-1.3A10 10 0 1 0 12 2Zm0 18a8 8 0 0 1-4.1-1.1l-.3-.2-3.1.8.8-3-.2-.3A8 8 0 1 1 12 20Zm4.5-5.7c-.2-.1-1.4-.7-1.6-.8-.2-.1-.4-.1-.5.1l-.7.9c-.1.2-.3.2-.5.1a6.5 6.5 0 0 1-3.2-2.8c-.1-.2 0-.4.1-.5l.4-.5c.1-.2.2-.3.3-.5v-.4l-.8-1.8c-.2-.5-.4-.4-.5-.4h-.5c-.2 0-.5.1-.7.3-.8.8-1 1.9-.6 3a9.3 9.3 0 0 0 4 4.4c1.7.8 2.5.9 3.3.8.6-.1 1.4-.6 1.6-1.2.2-.6.2-1.1.1-1.2l-.4-.2Z"/></svg>
+      </span>
+      <div>
+        <h1>Support Inbox</h1>
+        <p class="brand-sub">Shared WhatsApp workspace</p>
+      </div>
+    </div>
+
+    <label class="field">
+      <span>Username</span>
+      <input name="username" placeholder="jane.doe" autocomplete="username" required autofocus>
+    </label>
+    <label class="field">
+      <span>Password</span>
+      <input name="password" type="password" placeholder="••••••••" autocomplete="current-password" required>
+    </label>
+
+    <button type="submit" id="loginBtn">Sign in</button>
+    <p class="err" id="loginErr" role="alert"></p>
+  </form>
+  <p class="login-foot">Authorised team members only.</p>
+</div>
+
+<div id="app" class="app" hidden>
+  <header class="bar">
+    <span class="bar-brand">
+      <span class="brand-mark sm" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.7 14.9L2 22l5.3-1.3A10 10 0 1 0 12 2Zm0 18a8 8 0 0 1-4.1-1.1l-.3-.2-3.1.8.8-3-.2-.3A8 8 0 1 1 12 20Z"/></svg>
+      </span>
+      Support Inbox
+    </span>
+    <span id="conn" class="conn">connecting…</span>
+    <span class="spacer"></span>
+    <div class="profile">
+      <button id="profileBtn" class="user" aria-haspopup="menu" aria-expanded="false">
+        <span id="meAvatar" class="avatar sm"></span>
+        <span id="who" class="who"></span>
+        <svg class="caret" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <div id="profileMenu" class="menu" role="menu" hidden>
+        <div class="menu-head"><strong id="menuName"></strong><span id="menuRole"></span></div>
+        <button id="team" class="menu-item admin-only" role="menuitem">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 20v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6M22 20v-2a4 4 0 0 0-3-3.9M16 4.1a4 4 0 0 1 0 7.8"/></svg>
+          Team
+        </button>
+        <button id="reports" class="menu-item admin-only" role="menuitem">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>
+          Reports
+        </button>
+        <button id="waLink" class="menu-item admin-only" role="menuitem">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>
+          WhatsApp connection
+        </button>
+        <div class="menu-sep admin-only"></div>
+        <button id="logout" class="menu-item danger" role="menuitem">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+          Sign out
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <aside class="list">
+    <div class="list-head">
+      <label class="search-wrap">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
+        <input id="search" class="search" placeholder="Search name or number" autocomplete="off">
+        <button id="dateBtn" class="date-btn" title="Filter by date" aria-label="Filter by date">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>
+        </button>
+      </label>
+      <div id="datePanel" class="date-panel" hidden>
+        <div class="date-quick">
+          <button class="chip sm" data-days="0">Today</button>
+          <button class="chip sm" data-days="7">Last 7 days</button>
+          <button class="chip sm" data-days="30">Last 30 days</button>
+        </div>
+        <div class="date-row">
+          <input id="cFrom" type="date" aria-label="From date"><span class="to">to</span><input id="cTo" type="date" aria-label="To date">
+          <button id="dateClear" class="btn-sm">Clear</button>
+        </div>
+      </div>
+      <div class="cats">
+        <button class="chip on" data-cat="all">All</button>
+        <button class="chip" data-cat="personal">Personal</button>
+        <button class="chip" data-cat="group">Groups</button>
+        <button class="chip" data-cat="unassigned">Unassigned</button>
+      </div>
+    </div>
+    <div id="chats"></div>
+  </aside>
+
+  <main class="thread">
+    <div id="empty" class="empty">
+      <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-4-.9L3 21l1.9-4.9A8.4 8.4 0 0 1 12 3.1a8.4 8.4 0 0 1 9 8.4Z"/></svg>
+      <p class="empty-title">Select a conversation</p>
+      <p class="empty-sub">Pick a chat on the left to read and reply.</p>
+    </div>
+
+    <div id="panel" hidden>
+      <div class="head">
+        <button id="backBtn" class="back-btn" title="Back to conversations" aria-label="Back to conversations">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+        </button>
+        <span id="chatAvatar" class="avatar"></span>
+        <div class="head-text">
+          <div id="chatName" class="name"></div>
+          <div id="chatSub" class="sub"></div>
+        </div>
+        <button id="findBtn" class="icon-act" title="Search in this chat" aria-label="Search in this chat">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
+        </button>
+        <button id="claim" class="claim"></button>
+      </div>
+
+      <div id="findBar" class="find-bar" hidden>
+        <label class="search-wrap find-input">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
+          <input id="findInput" class="search" placeholder="Search in this conversation" autocomplete="off">
+        </label>
+        <span id="findCount" class="find-count"></span>
+        <button id="findPrev" class="icon-act" title="Older match" aria-label="Older match" disabled>
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+        </button>
+        <button id="findNext" class="icon-act" title="Newer match" aria-label="Newer match" disabled>
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <span class="find-sep"></span>
+        <input id="jumpDate" type="date" class="jump-date" aria-label="Jump to date" title="Jump to date">
+        <button id="jumpBtn" class="btn-sm">Jump to date</button>
+        <button id="findClose" class="icon-btn" title="Close search" aria-label="Close search">&times;</button>
+      </div>
+
+      <div id="messages" class="messages"></div>
+
+      <div class="composer">
+        <div id="blocked" class="blocked" hidden></div>
+        <div id="replyBar" class="reply-bar" hidden>
+          <span class="reply-strip"></span>
+          <span class="reply-text"><span id="replyWho" class="reply-who"></span><span id="replyBody" class="reply-body"></span></span>
+          <button id="replyCancel" class="icon-btn" title="Cancel reply" aria-label="Cancel reply">&times;</button>
+        </div>
+        <div id="attachment" class="attachment" hidden>
+          <img id="attachThumb" class="attach-thumb" alt="" hidden>
+          <span id="attachIcon" class="attach-icon" hidden>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>
+          </span>
+          <span class="attach-text"><span id="attachName"></span><span id="attachSize" class="attach-size"></span></span>
+          <button id="attachClear" class="icon-btn" title="Remove attachment" aria-label="Remove attachment">&times;</button>
+        </div>
+        <input id="file" type="file" hidden>
+        <button id="attach" class="attach-btn" title="Attach a photo or document" aria-label="Attach a photo or document">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.05 12.25 20.2a5.5 5.5 0 0 1-7.78-7.78l9.2-9.19a3.67 3.67 0 1 1 5.18 5.18l-9.2 9.2a1.83 1.83 0 1 1-2.59-2.6l8.5-8.49"/></svg>
+        </button>
+        <textarea id="input" rows="1" placeholder="Type a reply…  (Enter to send, Shift+Enter for a new line)"></textarea>
+        <button id="send" title="Send">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M3 20.5 21 12 3 3.5 3 10l12 2-12 2z"/></svg>
+          Send
+        </button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="teamModal" class="modal" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="teamTitle">
+    <div class="sheet-head">
+      <h2 id="teamTitle">Team</h2>
+      <button id="teamClose" class="icon-btn" title="Close" aria-label="Close">&times;</button>
+    </div>
+
+    <div class="sheet-body">
+      <p class="hint">Agents cannot change their own password. Reset it here and give them the new one directly.</p>
+      <div class="seats"><span id="seatCount"></span><span id="seatBar" class="seat-bar"><i></i></span></div>
+      <div id="teamActions" class="team-actions">
+        <button id="forceLogout" class="btn-sm" disabled>Force sign-out</button>
+        <button id="resetAll" class="btn-sm">Set one shared password…</button>
+      </div>
+      <form id="resetAllForm" class="reset-all" hidden>
+        <p class="hint warn-hint">⚠ Every active member gets the <strong>same</strong> password and is signed out. Anyone can then sign in as anyone, so replies can no longer be traced to a person.</p>
+        <div class="reset-all-row">
+          <input name="password" type="text" placeholder="New shared password (min 8 characters)" minlength="8" autocomplete="off" required>
+          <button type="submit" class="btn-sm primary">Apply to all</button>
+          <button type="button" id="resetAllCancel" class="btn-sm">Cancel</button>
+        </div>
+      </form>
+      <div id="teamList" class="team-list"></div>
+
+      <details class="adduser">
+        <summary>Add a team member</summary>
+        <form id="addUser" class="add-form">
+          <label class="field"><span>Username</span><input name="username" placeholder="ali" autocomplete="off" required></label>
+          <label class="field"><span>Full name</span><input name="name" placeholder="Ali Hassan" autocomplete="off" required></label>
+          <label class="field"><span>Password</span><input name="password" type="text" placeholder="at least 8 characters" autocomplete="off" required minlength="8"></label>
+          <label class="check"><input name="is_admin" type="checkbox"> Can manage the team</label>
+          <button type="submit">Create user</button>
+        </form>
+      </details>
+      <p class="err" id="teamErr" role="alert"></p>
+    </div>
+  </div>
+</div>
+
+
+<div id="reportModal" class="modal" hidden>
+  <div class="sheet wide" role="dialog" aria-modal="true" aria-labelledby="reportTitle">
+    <div class="sheet-head">
+      <h2 id="reportTitle">Reports</h2>
+      <button id="reportClose" class="icon-btn" title="Close" aria-label="Close">&times;</button>
+    </div>
+    <div class="sheet-body">
+      <div class="filters">
+        <button class="chip on" data-range="week">This week</button>
+        <button class="chip" data-range="month">This month</button>
+        <button class="chip" data-range="last">Last month</button>
+        <button class="chip" data-range="custom">Custom…</button>
+        <span id="customRange" class="custom-range" hidden>
+          <input id="fromDate" type="date"> <span class="to">to</span> <input id="toDate" type="date">
+          <button id="applyRange" class="btn-sm primary">Apply</button>
+        </span>
+      </div>
+      <p class="err" id="reportErr" role="alert"></p>
+
+      <div class="stat-row">
+        <div class="stat"><span class="stat-n" id="statCustomers">–</span><span class="stat-l">customers responded to</span></div>
+        <div class="stat"><span class="stat-n" id="statMessages">–</span><span class="stat-l">replies sent</span></div>
+        <div class="stat"><span class="stat-n" id="statDays">–</span><span class="stat-l">active days</span></div>
+      </div>
+
+      <h3 class="sub-h">Team share of replies</h3>
+      <div class="donut-wrap">
+        <svg id="donut" viewBox="0 0 140 140" width="150" height="150" role="img" aria-labelledby="donutDesc"><desc id="donutDesc"></desc></svg>
+        <div id="legend" class="legend"></div>
+      </div>
+
+      <h3 class="sub-h">Day by day</h3>
+      <div class="table-wrap">
+        <table class="matrix">
+          <thead><tr><th>Date</th><th class="num">Customers</th><th class="num">Replies</th><th class="num">Agents</th></tr></thead>
+          <tbody id="matrixBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="waModal" class="modal" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="waTitle">
+    <div class="sheet-head">
+      <h2 id="waTitle">WhatsApp connection</h2>
+      <button id="waClose" class="icon-btn" title="Close" aria-label="Close">&times;</button>
+    </div>
+    <div class="sheet-body">
+      <div class="wa-state"><span id="waDot" class="wa-dot"></span><div><div id="waStatus" class="wa-status">Checking…</div><div id="waNumber" class="hint"></div></div></div>
+      <div id="waQrWrap" class="qr-wrap" hidden>
+        <img id="waQr" class="qr" alt="QR code to link WhatsApp">
+        <p class="hint">On the phone: <strong>WhatsApp → Linked devices → Link a device</strong>, then scan. The code refreshes every few seconds.</p>
+      </div>
+      <p id="waNote" class="hint warn-hint" hidden>Linking controls are unavailable until the connection service is restarted. Messaging is unaffected.</p>
+      <div class="wa-actions">
+        <button id="waLinkBtn" class="btn-sm primary" hidden>Link a phone</button>
+        <button id="waUnlinkBtn" class="btn-sm danger-btn" hidden>Unlink this phone…</button>
+      </div>
+      <div id="waConfirm" class="confirm" hidden>
+        <p>Unlinking signs this app out of WhatsApp. Messages stop flowing until a phone is linked again — the inbox history stays.</p>
+        <div class="confirm-row">
+          <button id="waUnlinkYes" class="btn-sm danger-btn">Yes, unlink</button>
+          <button id="waUnlinkNo" class="btn-sm">Cancel</button>
+        </div>
+      </div>
+      <p class="err" id="waErr" role="alert"></p>
+    </div>
+  </div>
+</div>
+
+
+<div id="msgMenu" class="msg-menu" role="menu" hidden>
+  <button class="msg-menu-item" data-act="reply" role="menuitem">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 17-5-5 5-5M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
+    Reply
+  </button>
+  <button class="msg-menu-item" data-act="forward" role="menuitem">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 17 5-5-5-5M4 18v-2a4 4 0 0 1 4-4h12"/></svg>
+    Forward
+  </button>
+  <button class="msg-menu-item" data-act="copy" role="menuitem">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+    Copy
+  </button>
+</div>
+
+<div id="fwdModal" class="modal" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="fwdTitle">
+    <div class="sheet-head">
+      <h2 id="fwdTitle">Forward to…</h2>
+      <button id="fwdClose" class="icon-btn" title="Close" aria-label="Close">&times;</button>
+    </div>
+    <div class="sheet-body">
+      <div id="fwdPreview" class="fwd-preview"></div>
+      <label class="search-wrap fwd-search">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
+        <input id="fwdSearch" class="search" placeholder="Search conversations" autocomplete="off">
+      </label>
+      <div id="fwdList" class="fwd-list"></div>
+      <p class="err" id="fwdErr" role="alert"></p>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>

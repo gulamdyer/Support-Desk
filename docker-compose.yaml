@@ -1,0 +1,56 @@
+# Coolify: deploy this as a Docker Compose resource. Give `inbox` the domain;
+# `bridge` stays on the internal network with no published port.
+services:
+  bridge:
+    build: .
+    command: node bridge/bridge.js --port 3100 --session ./auth_state --media ./data/media
+    restart: unless-stopped
+    # ONE bridge process per number, always. Two clients fight over the rotating
+    # session keys and WhatsApp force-logs-out the device — so no scaling here,
+    # and redeploys must stop the old container before starting the new one.
+    deploy:
+      replicas: 1
+    volumes:
+      - auth_state:/app/auth_state
+      - data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3100/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  inbox:
+    build: .
+    restart: unless-stopped
+    # ALSO exactly one. The paced sender is a single in-process loop over the
+    # 'queued' rows: a second instance would pick the same row and send the
+    # customer the same message twice — and double the send rate the ban
+    # defences are built around. Never scale this service.
+    deploy:
+      replicas: 1
+    depends_on:
+      - bridge
+    environment:
+      PORT: 8080
+      BRIDGE_URL: http://bridge:3100
+      # Set these in Coolify's env UI, not here:
+      #   ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_NAME
+      #   WINDOW_HOURS, CHAT_HOURLY_CAP, GLOBAL_HOURLY_CAP,
+      #   DUPLICATE_CHAT_LIMIT, SEND_GAP_MIN_MS, SEND_GAP_MAX_MS, MAX_UPLOAD_MB
+    volumes:
+      - data:/app/data
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+# Named volumes survive every redeploy. Without them a push from GitHub wipes
+# the chat history and unlinks WhatsApp.
+volumes:
+  data:
+  auth_state:
