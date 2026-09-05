@@ -907,6 +907,9 @@ function wipeSession() {
   } catch {}
   lidToPhone = {};
   phoneToLid = {};
+  // The address book belongs to the account that was linked, not to the box.
+  // Leaving it here bleeds the previous number's contacts into the next one.
+  contacts.clear();
 }
 
 app.get('/link/status', (req, res) => res.json({
