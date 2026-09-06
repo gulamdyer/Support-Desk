@@ -139,7 +139,20 @@ app.use((req, res, next) =>
 // Express 4 does not catch rejections from async handlers; without this an
 // await that throws takes the whole process down instead of returning a 500.
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
-app.use(express.static(path.resolve('public')));
+// There is no build step, so filenames are not content-hashed and a long
+// browser cache pins people to an old build after every deploy. The shell
+// revalidates instead — the ETag makes the usual answer a 304 with no body —
+// while icons, which effectively never change, may sit in cache for a day.
+//
+// sw.js is the one that must never be cached: a stale service worker keeps
+// serving a stale app and cannot be corrected by shipping anything new.
+const REVALIDATE = /(?:sw\.js|index\.html|app\.js|style\.css|manifest\.webmanifest)$/;
+app.use(express.static(path.resolve('public'), {
+  etag: true,
+  setHeaders(res, filePath) {
+    res.setHeader('Cache-Control', REVALIDATE.test(filePath) ? 'no-cache' : 'public, max-age=86400');
+  },
+}));
 
 // FORCE_SECURE_COOKIE=false only for a bare-HTTP LAN deployment; the cookie is
 // then sniffable, which is exactly what the flag is admitting.

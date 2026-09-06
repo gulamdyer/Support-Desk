@@ -6,7 +6,7 @@
  * or intercepted; only the static shell is, so the app opens offline and can
  * render its own "not connected" state.
  */
-const CACHE = 'inbox-shell-v2';
+const CACHE = 'inbox-shell-v3';
 const SHELL = ['/', '/index.html', '/style.css', '/app.js',
   '/icon-192.png', '/icon-512.png', '/manifest.webmanifest'];
 
