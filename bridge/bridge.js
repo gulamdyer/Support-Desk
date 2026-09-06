@@ -128,6 +128,32 @@ const CONTACTS_FILE = path.join(path.dirname(MEDIA_DIR), 'contacts.json');
 const contacts = new Map();
 const digitsOf = (jid) => String(jid ?? '').replace(/[@:].*$/, '');
 
+/** Whether the linked phone's address book may be imported.
+ *
+ *  'pending' — just linked, nobody has been asked yet; the inbox prompts.
+ *  'on'      — an admin said yes. Names are stored and served.
+ *  'off'     — an admin said no. Numbers still resolve, names never land.
+ *
+ *  Kept in SESSION_DIR so unlinking wipes it along with the credentials: a new
+ *  phone is a new decision, never an inherited yes.
+ */
+const SYNC_FILE = path.join(SESSION_DIR, 'contact-sync.json');
+let contactSync = 'pending';
+function loadSyncPref() {
+  try {
+    const m = JSON.parse(readFileSync(SYNC_FILE, 'utf8')).mode;
+    contactSync = m === 'on' || m === 'off' ? m : 'pending';
+  } catch { contactSync = 'pending'; }
+}
+function setSyncPref(mode) {
+  contactSync = mode;
+  try {
+    mkdirSync(SESSION_DIR, { recursive: true });
+    writeFileSync(SYNC_FILE, JSON.stringify({ mode }));
+  } catch (e) { console.error('contact-sync preference save failed:', e.message); }
+}
+loadSyncPref();
+
 function loadContacts() {
   try {
     for (const c of JSON.parse(readFileSync(CONTACTS_FILE, 'utf8'))) contacts.set(c.key, c);
@@ -168,7 +194,10 @@ function rememberContact(c) {
   const resolvedLid = lid || (phone ? phoneToLid[phone] : null) || null;
   if (!resolvedLid && !phone) return;
 
-  const name = c.name || c.verifiedName || null;
+  // The saved name is the address book. It is only kept once an admin has
+  // asked for the import — the record itself still forms either way, because
+  // the LID/phone pair is what lets a real number display instead of a LID.
+  const name = contactSync === 'on' ? (c.name || c.verifiedName || null) : null;
   const notify = c.notify || null;
   for (const key of new Set([resolvedLid, phone].filter(Boolean))) {
     const prev = contacts.get(key) || {};
@@ -495,7 +524,7 @@ async function openSocket() {
       // unprompted when a device is FIRST linked. This session was linked on a
       // laptop and copied here, so without an explicit pull the contact list
       // never arrives and every sender shows as a bare number.
-      if (!PAIR_ONLY && contacts.size === 0) pullAddressBook();
+      if (!PAIR_ONLY && contactSync === 'on' && contacts.size === 0) pullAddressBook();
       if (PAIR_ONLY) {
         console.log('✅ Pairing complete. Credentials saved.');
         // Give Baileys a moment to flush creds, then exit cleanly
@@ -907,9 +936,14 @@ function wipeSession() {
   } catch {}
   lidToPhone = {};
   phoneToLid = {};
+  contactSync = 'pending';   // the next phone gets asked again
   // The address book belongs to the account that was linked, not to the box.
   // Leaving it here bleeds the previous number's contacts into the next one.
+  // The cached copy has to go with it: otherwise a restart reloads the old
+  // phone's names from disk and the inbox mirrors them straight back.
+  clearTimeout(saveTimer);
   contacts.clear();
+  try { rmSync(CONTACTS_FILE, { force: true }); } catch {}
 }
 
 app.get('/link/status', (req, res) => res.json({
@@ -917,6 +951,7 @@ app.get('/link/status', (req, res) => res.json({
   qr: currentQr,               // data: URL while a code is waiting to be scanned
   number: linkedNumber,
   contacts: contactPeople(),
+  contactSync,                 // pending | on | off
 }));
 
 /** Drop this device from the phone's linked-devices list and wipe the session.
@@ -959,6 +994,26 @@ app.post('/link/start', async (req, res) => {
 
 // The inbox server mirrors this into SQLite so names resolve in the UI.
 app.get('/contacts', (req, res) => res.json([...contacts.values()]));
+
+/** Import the address book. This is the only path that turns names on. */
+app.post('/contacts/sync', async (req, res) => {
+  if (connectionState !== 'connected') return res.status(409).json({ error: 'No phone is linked.' });
+  setSyncPref('on');
+  try {
+    await pullAddressBook();
+    res.json({ ok: true, contactSync });
+  } catch (e) {
+    // The preference stands even if this pull failed — a later reconnect or an
+    // explicit resync finishes the job rather than silently staying off.
+    res.status(502).json({ error: e.message, contactSync });
+  }
+});
+
+/** Decline the import. Numbers still resolve; no saved name is ever stored. */
+app.post('/contacts/skip', (req, res) => {
+  setSyncPref('off');
+  res.json({ ok: true, contactSync });
+});
 
 // Re-pull the address book on demand (a contact renamed on the phone).
 app.post('/contacts/resync', async (req, res) => {

@@ -288,6 +288,14 @@
         <button id="waLinkBtn" class="btn-sm primary" hidden>Link a phone</button>
         <button id="waUnlinkBtn" class="btn-sm danger-btn" hidden>Unlink this phone…</button>
       </div>
+      <div id="waSync" class="confirm" hidden>
+        <p><strong>Connected as <span id="waSyncNum"></span>.</strong></p>
+        <p>Import the saved contact names from this phone? Chats will show names instead of numbers. Nothing is imported unless you choose to.</p>
+        <div class="confirm-row">
+          <button id="waSyncYes" class="btn-sm primary">Sync contacts</button>
+          <button id="waSyncNo" class="btn-sm">Not now</button>
+        </div>
+      </div>
       <div id="waConfirm" class="confirm" hidden>
         <p>Unlinking signs this app out of WhatsApp. Messages stop flowing until a phone is linked again — the inbox history stays.</p>
         <div class="confirm-row">

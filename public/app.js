@@ -1047,6 +1047,8 @@ $('applyRange').onclick = runReport;
 // --- admin: WhatsApp device linking --------------------------------------
 let waTimer = null;
 let waWaiting = false;
+let waWasLinked = null;   // null until the first poll, so opening an already-linked
+                          // modal does not announce a connection that happened hours ago
 // Poll fast while a QR is being prepared, slowly once it is on screen.
 function waPoll(ms) { clearInterval(waTimer); waTimer = setInterval(loadWa, ms); }
 async function loadWa() {
@@ -1059,7 +1061,17 @@ async function loadWa() {
       : s.state === 'logged_out' ? 'No phone linked'
       : 'Not connected right now';
     $('waNumber').textContent = linked && s.number
-      ? `+${s.number}${s.contacts ? ` · ${s.contacts} contacts synced` : ''}` : '';
+      ? `+${s.number}${s.contactSync === 'on' && s.contacts ? ` · ${s.contacts} contacts synced` : ''}` : '';
+
+    // Announce the moment it lands, and only that moment.
+    if (linked && waWasLinked === false) toast(`WhatsApp connected as +${s.number}`, 'ok');
+    waWasLinked = linked;
+
+    // Asked once per linked phone. Unlinking resets it, so a new phone is a new
+    // decision rather than an inherited yes.
+    const ask = linked && s.contactSync === 'pending';
+    $('waSync').hidden = !ask;
+    if (ask) $('waSyncNum').textContent = `+${s.number}`;
     $('waQrWrap').hidden = !s.qr;
     if (s.qr) { $('waQr').src = s.qr; waWaiting = false; waPoll(3000); }
     // Linking needs the newer connection service. Say what to do about it in
@@ -1075,10 +1087,30 @@ $('waLink').onclick = () => {
   $('waModal').hidden = false;
   $('waErr').textContent = '';
   $('waConfirm').hidden = true;
+  $('waSync').hidden = true;
   loadWa();
   waPoll(3000); // the QR rotates every ~20s
 };
-const closeWa = () => { $('waModal').hidden = true; clearInterval(waTimer); waTimer = null; waWaiting = false; };
+const closeWa = () => { $('waModal').hidden = true; clearInterval(waTimer); waTimer = null; waWaiting = false; waWasLinked = null; };
+
+$('waSyncYes').onclick = async () => {
+  $('waErr').textContent = '';
+  $('waSync').hidden = true;
+  toast('Importing contacts…');
+  try {
+    await api('/api/admin/whatsapp/contacts/sync', {});
+    toast('Contacts imported. Names appear as the sync finishes.', 'ok');
+  } catch (err) { $('waErr').textContent = err.message; }
+  await loadWa();
+};
+
+$('waSyncNo').onclick = async () => {
+  $('waErr').textContent = '';
+  $('waSync').hidden = true;
+  try { await api('/api/admin/whatsapp/contacts/skip', {}); toast('Contacts not imported.', 'ok'); }
+  catch (err) { $('waErr').textContent = err.message; }
+  await loadWa();
+};
 $('waClose').onclick = closeWa;
 $('waModal').onclick = (e) => { if (e.target.id === 'waModal') closeWa(); };
 $('waUnlinkBtn').onclick = () => { $('waConfirm').hidden = false; };

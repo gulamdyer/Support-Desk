@@ -3,7 +3,7 @@ import express from 'express';
 import path from 'node:path';
 import { existsSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import S, { recordInbound, now, db } from './db.js';
+import S, { recordInbound, now, db, contactChanged } from './db.js';
 import { login, logout, requireAuth, requireAdmin, hashPassword, seedAdmin, publicUser, LoginError } from './auth.js';
 import { queueReply, queueMedia, windowState, checkOutbound, runSender, GateError } from './gate.js';
 
@@ -93,13 +93,20 @@ async function syncContacts() {
       await syncGroupNames();
       const list = await bridge('/contacts');
       if (Array.isArray(list) && list.length) {
-        const t = now();
-        db.exec('BEGIN');
-        try {
-          for (const c of list) S.upsertContact.run(c.key, c.lid ?? null, c.phone ?? null, c.name ?? null, c.notify ?? null, t);
-          db.exec('COMMIT');
-        } catch (e) { db.exec('ROLLBACK'); throw e; }
-        broadcast({ type: 'chats' });
+        // Skip anything already stored with the same name and number. The whole
+        // address book arrives on every pass, so without this each tick rewrites
+        // thousands of identical rows and bumps updated_ts for no reason.
+        const have = new Map(S.contactsAll.all().map((r) => [r.key, r]));
+        const fresh = list.filter((c) => contactChanged(have.get(c.key), c));
+        if (fresh.length) {
+          const t = now();
+          db.exec('BEGIN');
+          try {
+            for (const c of fresh) S.upsertContact.run(c.key, c.lid ?? null, c.phone ?? null, c.name ?? null, c.notify ?? null, t);
+            db.exec('COMMIT');
+          } catch (e) { db.exec('ROLLBACK'); throw e; }
+          broadcast({ type: 'chats' });
+        }
       }
     } catch {}
     await new Promise((r) => setTimeout(r, 300000)); // 5 min; the address book barely moves
@@ -357,6 +364,16 @@ app.post('/api/admin/whatsapp/unlink', requireAdmin, wrap(async (req, res) => {
 
 app.post('/api/admin/whatsapp/link', requireAdmin, wrap(async (req, res) => {
   res.json(await bridge('/link/start', {}));
+}));
+
+// Importing the address book is a deliberate choice, made once per linked
+// phone. Neither route touches pairing.
+app.post('/api/admin/whatsapp/contacts/sync', requireAdmin, wrap(async (req, res) => {
+  res.json(await bridge('/contacts/sync', {}));
+}));
+
+app.post('/api/admin/whatsapp/contacts/skip', requireAdmin, wrap(async (req, res) => {
+  res.json(await bridge('/contacts/skip', {}));
 }));
 
 /** Attachment upload. Same gate as any other outbound message: an image sent to

@@ -95,6 +95,13 @@ db.function('jidkey', { deterministic: true }, (jid) => String(jid ?? '').replac
 
 export const now = () => Math.floor(Date.now() / 1000);
 
+/** True when a contact from the bridge differs from the row already stored.
+ *  The whole address book arrives on every sync pass, so this is what stops
+ *  thousands of identical rows being rewritten — same name and same number
+ *  means there is nothing to do. */
+export const contactChanged = (prev, c) =>
+  !prev || prev.name !== (c.name ?? null) || prev.phone !== (c.phone ?? null);
+
 const S = {
   insertInbound: db.prepare(`INSERT OR IGNORE INTO messages
     (id, wa_id, chat_id, sender_id, sender_name, body, from_me, ts, media_type, media_path, status, reply_to)
@@ -272,6 +279,7 @@ const S = {
       name       = COALESCE(excluded.name, contacts.name),
       push_name  = COALESCE(excluded.push_name, contacts.push_name),
       updated_ts = excluded.updated_ts`),
+  contactsAll: db.prepare(`SELECT key, name, phone FROM contacts`),
   contactCount: db.prepare(`SELECT COUNT(*) AS c FROM contacts`),
 
   userByName: db.prepare(`SELECT * FROM users WHERE username = ?`),
