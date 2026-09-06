@@ -194,14 +194,15 @@ app.post('/api/admin/users', requireAdmin, wrap(async (req, res) => {
     // Say what to type, not which characters failed a pattern.
     const suggestion = username.replace(/[^a-z0-9._-]+/g, '.').replace(/\.{2,}/g, '.').replace(/^[._-]+|[._-]+$/g, '').slice(0, 32);
     return res.status(422).json({
+      field: 'username',
       error: suggestion.length >= 2 && suggestion !== username
         ? `A username is a sign-in name, so it cannot contain spaces. Try "${suggestion}".`
         : 'A username is 2-32 characters: letters, digits, dot, underscore or hyphen.',
     });
   }
-  if (!name) return res.status(422).json({ error: 'Full name is required.' });
-  if (password.length < MIN_PW) return res.status(422).json({ error: `Password must be at least ${MIN_PW} characters.` });
-  if (S.userByName.get(username)) return res.status(409).json({ error: `User "${username}" already exists.` });
+  if (!name) return res.status(422).json({ field: 'name', error: 'Enter the person\'s full name — this is what the team sees.' });
+  if (password.length < MIN_PW) return res.status(422).json({ field: 'password', error: `Use at least ${MIN_PW} characters.` });
+  if (S.userByName.get(username)) return res.status(409).json({ field: 'username', error: `"${username}" is already taken — pick another username.` });
   if (S.activeCount.get().c >= MAX_TEAM) {
     return res.status(409).json({ error: `The team is full (${MAX_TEAM} seats). Remove someone first.` });
   }
@@ -215,7 +216,7 @@ app.post('/api/admin/users/:id/password', requireAdmin, wrap(async (req, res) =>
   // 404, not 403: the owner account is not listed, so it must not be
   // discoverable by probing ids either.
   if (!user || user.is_owner) return res.status(404).json({ error: 'No such user.' });
-  if (password.length < MIN_PW) return res.status(422).json({ error: `Password must be at least ${MIN_PW} characters.` });
+  if (password.length < MIN_PW) return res.status(422).json({ field: 'password', error: `Use at least ${MIN_PW} characters.` });
   S.setPassword.run(await hashPassword(password), user.id);
   S.dropUserSessions.run(user.id); // the old password's sessions die with it
   res.json({ ok: true, signedOut: true });

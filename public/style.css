@@ -228,6 +228,11 @@ button { font: inherit; cursor: pointer; }
 .adduser { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
 .adduser summary { cursor: pointer; font-weight: 600; font-size: 13px; color: var(--accent); }
 .add-form { display: grid; gap: 10px; margin-top: 12px; }
+/* Mark the field itself, so the eye goes to the input and not just the text. */
+.field.bad > span { color: var(--bad); }
+.field.bad input { border-color: var(--bad); background: var(--panel); }
+.field.bad input:focus { border-color: var(--bad); box-shadow: 0 0 0 3px rgba(220, 76, 70, .18); }
+.field-err { color: var(--bad); font-size: 12.5px; line-height: 1.45; }
 .check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
 .add-form button { padding: 10px; border: 0; border-radius: 10px; background: var(--accent);
   color: #fff; font-weight: 600; }

@@ -8,7 +8,11 @@ const api = async (url, body) => {
   // A 401 once signed in means the session died under us. Every caller would
   // otherwise surface it as some unrelated-looking failure.
   if (res.status === 401 && me && url !== '/api/login') sessionExpired();
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok) {
+    const err = new Error(data.error || `Request failed (${res.status})`);
+    err.field = data.field;   // so the message can land on the input it concerns
+    throw err;
+  }
   return data;
 };
 
@@ -890,7 +894,31 @@ $('teamList').onclick = async (e) => {
 const toUsername = (v) => String(v).toLowerCase().replace(/[^a-z0-9._-]+/g, '.').replace(/\.{2,}/g, '.').slice(0, 32);
 const trimSeps = (v) => v.replace(/^[._-]+|[._-]+$/g, '');
 
+/** Put a validation message under the input it is about. A message at the foot
+ *  of the form tells you something is wrong; it does not tell you where. */
+function clearFieldErrors(form) {
+  form.querySelectorAll('.field.bad').forEach((l) => l.classList.remove('bad'));
+  form.querySelectorAll('.field-err').forEach((n) => n.remove());
+}
+
+function showFormError(form, err, fallbackEl) {
+  clearFieldErrors(form);
+  const input = err.field && form.elements[err.field];
+  if (!input) { fallbackEl.textContent = err.message; return; }
+  fallbackEl.textContent = '';
+  const field = input.closest('.field');
+  field.classList.add('bad');
+  const note = document.createElement('span');
+  note.className = 'field-err';
+  note.textContent = err.message;
+  field.appendChild(note);
+  input.focus();
+  input.select();
+}
+
 const usernameInput = $('addUser').elements.username;
+// Any edit clears the complaint, so it never lingers over a corrected field.
+$('addUser').addEventListener('input', () => clearFieldErrors($('addUser')));
 usernameInput.oninput = () => {
   const start = usernameInput.selectionStart;
   const before = usernameInput.value;
@@ -911,9 +939,10 @@ $('addUser').onsubmit = async (e) => {
       password: f.get('password'), is_admin: f.get('is_admin') === 'on',
     });
     e.target.reset();
+    clearFieldErrors(e.target);
     await loadTeam();
     toast('User created.', 'ok');
-  } catch (err) { $('teamErr').textContent = err.message; }
+  } catch (err) { showFormError(e.target, err, $('teamErr')); }
 };
 
 
