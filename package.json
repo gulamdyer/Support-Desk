@@ -12,7 +12,7 @@
     "bridge": "node --env-file-if-exists=.env bridge/bridge.js --port 3100 --session ./auth_state --media ./data/media",
     "link": "node --env-file-if-exists=.env bridge/bridge.js --pair-only --session ./auth_state",
     "user": "node --env-file-if-exists=.env src/adduser.js",
-    "test": "node src/gate.test.js && node src/contacts.test.js",
+    "test": "node src/gate.test.js && node src/contacts.test.js && node bridge/pairing.test.js",
     "backup": "node --env-file-if-exists=.env src/backup.js"
   },
   "dependencies": {

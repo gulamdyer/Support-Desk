@@ -27,6 +27,7 @@
  */
 
 import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } from '@whiskeysockets/baileys';
+import { pairingActive } from './pairing.js';
 import express from 'express';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
@@ -291,6 +292,30 @@ function scheduleReconnect(ms) {
   reconnectTimer = setTimeout(() => { reconnectTimer = null; startSocket(); }, ms);
 }
 
+// --- pairing window -------------------------------------------------------
+// See pairing.js: a QR nobody is watching still costs a full pairing session
+// with WhatsApp, and doing that all night is what gets linking refused. The
+// window opens when an admin asks to link, is held open while the UI polls for
+// the QR, and shuts by itself a few minutes after they stop looking.
+const PAIR_WINDOW_MS = 3 * 60 * 1000;
+let pairingUntil = 0;
+const extendPairing = () => { pairingUntil = Date.now() + PAIR_WINDOW_MS; };
+
+/** Tear the pairing socket down and go idle until someone asks again. */
+function stopPairing(why) {
+  pairingUntil = 0;
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  currentQr = null;
+  if (sock) {
+    try { sock.ev.removeAllListeners(); } catch {}
+    try { sock.end(); } catch {}
+    sock = null;
+  }
+  connectionState = 'logged_out';
+  console.log(`⏸️  Pairing paused — ${why}. Waiting for an admin to link a phone.`);
+}
+
 // Group-subject cache. Per-message we want the real WhatsApp group name (subject)
 // e.g. "360° KSA Support" so downstream pricing can read the market country from it.
 // groupMetadata() is a network call — NEVER awaited on the ingestion hot path (a slow/
@@ -501,6 +526,12 @@ async function openSocket() {
         // hammer WhatsApp and pattern-match to bot behaviour → flag/logout risk.
         // Counter resets on a successful open.
         reconnectAttempts += 1;
+        // Nobody is waiting for this QR, so opening another pairing session
+        // only spends goodwill with WhatsApp. Go quiet instead.
+        if (!pairingActive({ registered: sockRegistered, pairingUntil, pairOnly: PAIR_ONLY })) {
+          stopPairing('no admin is watching for a QR');
+          return;
+        }
         // Backoff protects a REGISTERED session from hammering WhatsApp. While
         // the device is still unlinked, someone is watching the screen waiting
         // to scan: a 60s gap there just means a minute of no usable QR code.
@@ -946,13 +977,19 @@ function wipeSession() {
   try { rmSync(CONTACTS_FILE, { force: true }); } catch {}
 }
 
-app.get('/link/status', (req, res) => res.json({
-  state: connectionState,      // connected | disconnected | logged_out
-  qr: currentQr,               // data: URL while a code is waiting to be scanned
-  number: linkedNumber,
-  contacts: contactPeople(),
-  contactSync,                 // pending | on | off
-}));
+app.get('/link/status', (req, res) => {
+  // The inbox polls this every few seconds while the WhatsApp panel is open,
+  // and nothing else calls it — so it is an accurate "somebody is watching"
+  // signal. Extend an open window; never open a closed one.
+  if (!sockRegistered && pairingUntil) extendPairing();
+  return res.json({
+    state: connectionState,    // connected | disconnected | logged_out
+    qr: currentQr,             // data: URL while a code waits to be scanned
+    number: linkedNumber,
+    contacts: contactPeople(),
+    contactSync,               // pending | on | off
+  });
+});
 
 /** Drop this device from the phone's linked-devices list and wipe the session.
  *  Destructive and deliberate: nothing reaches WhatsApp until a phone is linked
@@ -985,6 +1022,7 @@ app.post('/link/start', async (req, res) => {
     currentQr = null;
     connectionState = 'connecting';
     reconnectAttempts = 0;
+    extendPairing();           // an admin is at the screen; QRs are wanted now
     await startSocket();
     res.json({ ok: true });
   } catch (err) {
@@ -1063,6 +1101,14 @@ if (PAIR_ONLY) {
     console.log(`🌉 WhatsApp bridge listening on ${BIND}:${PORT} (mirror mode)`);
     console.log(`📁 Session stored in: ${SESSION_DIR}`);
     console.log();
-    startSocket();
+    // A linked session reconnects on its own. An unlinked one waits to be
+    // asked: starting a pairing socket on every restart is how a redeploy used
+    // to kick off another all-night QR loop.
+    if (existsSync(path.join(SESSION_DIR, 'creds.json'))) {
+      startSocket();
+    } else {
+      connectionState = 'logged_out';
+      console.log('📴 No phone linked. Waiting for an admin to link one from the UI.');
+    }
   });
 }
