@@ -431,11 +431,13 @@ async function openSocket() {
     // phone's push notifications, which the support team still relies on.
     syncFullHistory: true,
     markOnlineOnConnect: false,
-    // Keep the pairing socket alive well beyond the ~3-min pairing-code validity.
-    // Default (~60s) closes the socket with 408 mid-entry, so the code is correct
-    // but there's no live socket to complete the handshake → phone shows
-    // "Couldn't link device". 5 min gives the operator ample time to type it.
-    qrTimeout: 300_000,
+    // qrTimeout is how long ONE code is shown before rotating to the next, not
+    // a socket keep-alive. The pairing-CODE flow needs a long-lived socket so
+    // the operator can finish typing an 8-character code, but applying that to
+    // the QR flow froze a single code on screen: WhatsApp expires it after
+    // about a minute and closes the session at ~4 (the 428 in the logs), so
+    // most of what the admin scanned was already dead. Let the QR rotate.
+    qrTimeout: usePairingCode ? 300_000 : 60_000,
     // Required for Baileys 7.x: without this, incoming messages that need
     // E2EE session re-establishment are silently dropped (msg.message === null)
     getMessage: async (key) => {

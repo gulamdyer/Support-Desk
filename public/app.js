@@ -1093,6 +1093,10 @@ $('waLink').onclick = () => {
 };
 const closeWa = () => { $('waModal').hidden = true; clearInterval(waTimer); waTimer = null; waWaiting = false; waWasLinked = null; };
 
+// Either answer is the end of the job: the phone is linked and the contact
+// decision is made, so the panel closes itself rather than leaving the admin
+// looking at a dialog with nothing left to do. An error keeps it open — that
+// is the one case where there is still something to read.
 $('waSyncYes').onclick = async () => {
   $('waErr').textContent = '';
   $('waSync').hidden = true;
@@ -1100,16 +1104,18 @@ $('waSyncYes').onclick = async () => {
   try {
     await api('/api/admin/whatsapp/contacts/sync', {});
     toast('Contacts imported. Names appear as the sync finishes.', 'ok');
-  } catch (err) { $('waErr').textContent = err.message; }
-  await loadWa();
+    closeWa();
+  } catch (err) { $('waErr').textContent = err.message; await loadWa(); }
 };
 
 $('waSyncNo').onclick = async () => {
   $('waErr').textContent = '';
   $('waSync').hidden = true;
-  try { await api('/api/admin/whatsapp/contacts/skip', {}); toast('Contacts not imported.', 'ok'); }
-  catch (err) { $('waErr').textContent = err.message; }
-  await loadWa();
+  try {
+    await api('/api/admin/whatsapp/contacts/skip', {});
+    toast('Contacts not imported.', 'ok');
+    closeWa();
+  } catch (err) { $('waErr').textContent = err.message; await loadWa(); }
 };
 $('waClose').onclick = closeWa;
 $('waModal').onclick = (e) => { if (e.target.id === 'waModal') closeWa(); };
