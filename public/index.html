@@ -18,6 +18,17 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Inbox">
+<script>
+  // Chrome fires beforeinstallprompt while the page is still parsing — before
+  // /app.js at the end of <body> has run — and the event is never replayed. Catch
+  // it here and hold it, or the app can never offer its own install option.
+  window.__installPrompt = null;
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();               // suppress Chrome's own mini-infobar
+    window.__installPrompt = e;
+    window.dispatchEvent(new Event('app-installable'));
+  });
+</script>
 </head>
 <body>
 
@@ -78,7 +89,11 @@
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>
           WhatsApp connection
         </button>
-        <div class="menu-sep admin-only"></div>
+        <button id="installApp" class="menu-item" role="menuitem" hidden>
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3"/><path d="M12 7v7m0 0 3-3m-3 3-3-3"/></svg>
+          Add to Home Screen
+        </button>
+        <div class="menu-sep"></div>
         <button id="logout" class="menu-item danger" role="menuitem">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
           Sign out
@@ -308,6 +323,19 @@
   </div>
 </div>
 
+
+<div id="installModal" class="modal" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="installTitle">
+    <div class="sheet-head">
+      <h2 id="installTitle">Add to Home Screen</h2>
+      <button id="installClose" class="icon-btn" title="Close" aria-label="Close">&times;</button>
+    </div>
+    <div class="sheet-body">
+      <p id="installSteps" class="hint"></p>
+      <p class="hint">It opens like an app afterwards — full screen, with its own icon.</p>
+    </div>
+  </div>
+</div>
 
 <div id="msgMenu" class="msg-menu" role="menu" hidden>
   <button class="msg-menu-item" data-act="reply" role="menuitem">

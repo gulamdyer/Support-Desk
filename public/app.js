@@ -1220,6 +1220,47 @@ function start() {
 
 api('/api/me').then((d) => { me = d.user; start(); }).catch(() => { $('loginPage').hidden = false; });
 
+// --- install to the home screen ------------------------------------------
+// Chrome and Edge hand over a real prompt. Safari has no such API on any
+// platform, so the only honest thing there is to say where the button is.
+const installed = () =>
+  window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);   // iPadOS reports as Mac
+const isSafari = /^((?!chrome|chromium|crios|android|fxios|edg).)*safari/i.test(navigator.userAgent);
+
+function refreshInstallOption() {
+  const canPrompt = !!window.__installPrompt;
+  $('installApp').hidden = installed() || !(canPrompt || isSafari);
+}
+window.addEventListener('app-installable', refreshInstallOption);
+window.addEventListener('appinstalled', () => {
+  window.__installPrompt = null;
+  $('installApp').hidden = true;
+  toast('Installed. Look for the Support Inbox icon on your home screen.', 'ok');
+});
+refreshInstallOption();
+
+$('installApp').onclick = async () => {
+  closeMenu();
+  const prompt = window.__installPrompt;
+  if (prompt) {
+    prompt.prompt();
+    const { outcome } = await prompt.userChoice;
+    // A dismissed prompt cannot be reused; Chrome issues a fresh one later.
+    window.__installPrompt = null;
+    if (outcome !== 'accepted') refreshInstallOption();
+    return;
+  }
+  $('installSteps').innerHTML = isIOS
+    ? 'In Safari, tap <strong>Share</strong> at the bottom of the screen, then choose <strong>Add to Home Screen</strong>.'
+    : 'In Safari, open the <strong>File</strong> menu and choose <strong>Add to Dock</strong>. On iPhone or iPad, tap <strong>Share</strong> then <strong>Add to Home Screen</strong>.';
+  $('installModal').hidden = false;
+};
+const closeInstall = () => { $('installModal').hidden = true; };
+$('installClose').onclick = closeInstall;
+$('installModal').onclick = (e) => { if (e.target.id === 'installModal') closeInstall(); };
+
 // Registered last so it can never delay first paint. Requires HTTPS (or
 // localhost) — on plain HTTP it simply does nothing.
 if ('serviceWorker' in navigator) {
