@@ -190,7 +190,15 @@ app.post('/api/admin/users', requireAdmin, wrap(async (req, res) => {
   const username = String(req.body?.username || '').toLowerCase().trim();
   const name = String(req.body?.name || '').trim();
   const password = String(req.body?.password || '');
-  if (!/^[a-z0-9._-]{2,32}$/.test(username)) return res.status(422).json({ error: 'Username: 2-32 chars, letters/digits/._- only.' });
+  if (!/^[a-z0-9._-]{2,32}$/.test(username)) {
+    // Say what to type, not which characters failed a pattern.
+    const suggestion = username.replace(/[^a-z0-9._-]+/g, '.').replace(/\.{2,}/g, '.').replace(/^[._-]+|[._-]+$/g, '').slice(0, 32);
+    return res.status(422).json({
+      error: suggestion.length >= 2 && suggestion !== username
+        ? `A username is a sign-in name, so it cannot contain spaces. Try "${suggestion}".`
+        : 'A username is 2-32 characters: letters, digits, dot, underscore or hyphen.',
+    });
+  }
   if (!name) return res.status(422).json({ error: 'Full name is required.' });
   if (password.length < MIN_PW) return res.status(422).json({ error: `Password must be at least ${MIN_PW} characters.` });
   if (S.userByName.get(username)) return res.status(409).json({ error: `User "${username}" already exists.` });

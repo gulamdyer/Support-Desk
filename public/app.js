@@ -882,13 +882,32 @@ $('teamList').onclick = async (e) => {
   }
 };
 
+// A username is a sign-in name, not a person's name — but "Khalid Sheikh" is
+// what anyone types into a field labelled Username. Rather than rejecting it,
+// shape it as they type: spaces and anything else outside the allowed set
+// become dots, so they watch it turn into khalid.sheikh and never meet the
+// validation error at all.
+const toUsername = (v) => String(v).toLowerCase().replace(/[^a-z0-9._-]+/g, '.').replace(/\.{2,}/g, '.').slice(0, 32);
+const trimSeps = (v) => v.replace(/^[._-]+|[._-]+$/g, '');
+
+const usernameInput = $('addUser').elements.username;
+usernameInput.oninput = () => {
+  const start = usernameInput.selectionStart;
+  const before = usernameInput.value;
+  const after = toUsername(before);
+  if (after === before) return;
+  usernameInput.value = after;
+  // Keep the caret where the typing was, not thrown to the end.
+  usernameInput.setSelectionRange(start, start);
+};
+
 $('addUser').onsubmit = async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
   $('teamErr').textContent = '';
   try {
     await api('/api/admin/users', {
-      username: f.get('username'), name: f.get('name'),
+      username: trimSeps(toUsername(f.get('username'))), name: f.get('name'),
       password: f.get('password'), is_admin: f.get('is_admin') === 'on',
     });
     e.target.reset();
