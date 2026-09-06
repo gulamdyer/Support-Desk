@@ -4,8 +4,10 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 
-mkdirSync(path.resolve('data'), { recursive: true });
-export const db = new DatabaseSync(path.resolve('data', 'inbox.db'));
+// DB_PATH exists so tests can run against a throwaway file. Unset in production.
+const DB_PATH = process.env.DB_PATH || path.resolve('data', 'inbox.db');
+mkdirSync(path.dirname(DB_PATH), { recursive: true });
+export const db = new DatabaseSync(DB_PATH);
 
 db.exec(`
 PRAGMA journal_mode = WAL;
@@ -63,18 +65,43 @@ CREATE INDEX IF NOT EXISTS idx_msg_chat ON messages(chat_id, ts);
 CREATE INDEX IF NOT EXISTS idx_msg_queue ON messages(status, ts) WHERE status IN ('queued','sending');
 CREATE INDEX IF NOT EXISTS idx_chat_recent ON chats(last_ts DESC);
 CREATE INDEX IF NOT EXISTS idx_sess_user ON sessions(user_id);
+`);
 
--- Who a WhatsApp id belongs to. Kept apart from messages on purpose: a name
--- learned today then shows on every message that person ever sent, instead of
--- history being frozen with whatever label was known at the time.
+// --- contacts -------------------------------------------------------------
+// One row per PERSON. WhatsApp identifies the same human by two different ids —
+// a phone number and a privacy LID — and a message arrives carrying whichever
+// one it feels like, so the ids live in their own table pointing back at the
+// person. That keeps lookups to two primary-key hops without storing anybody
+// twice.
+//
+// The original shape keyed `contacts` by the id itself, which meant one row per
+// id and therefore two rows per person. Fold those together before creating the
+// new tables; `contacts_legacy` is drained and dropped at the bottom of this file.
+const legacyContacts =
+  db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='contacts'`).get() &&
+  db.prepare(`PRAGMA table_info(contacts)`).all().some((c) => c.name === 'key');
+if (legacyContacts) db.exec(`ALTER TABLE contacts RENAME TO contacts_legacy`);
+
+db.exec(`
 CREATE TABLE IF NOT EXISTS contacts (
-  key        TEXT PRIMARY KEY,   -- digits of the LID or the phone number
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
   lid        TEXT,               -- WhatsApp's privacy id
   phone      TEXT,               -- real number, when known
   name       TEXT,               -- as saved in the linked phone's address book
   push_name  TEXT,               -- what the contact calls themselves
   updated_ts INTEGER NOT NULL
 );
+
+-- Every id this person is reachable under. Two rows here beat two contact rows:
+-- the duplication is a pair of short strings, not a copy of the whole person.
+CREATE TABLE IF NOT EXISTS contact_keys (
+  key        TEXT PRIMARY KEY,   -- digits of a LID or a phone number
+  contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_ckeys_contact ON contact_keys(contact_id);
+CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone) WHERE phone IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_contacts_lid   ON contacts(lid)   WHERE lid IS NOT NULL;
 `);
 
 // Migration for databases created before roles existed. CREATE TABLE IF NOT
@@ -95,12 +122,70 @@ db.function('jidkey', { deterministic: true }, (jid) => String(jid ?? '').replac
 
 export const now = () => Math.floor(Date.now() / 1000);
 
+/** Resolve a JID to its person. Two primary-key hops: the id finds the alias
+ *  row, the alias row finds the contact. `a` is the contact alias used by the
+ *  surrounding query; the alias table borrows it with a `k` suffix. */
+const joinContact = (a, expr) =>
+  `LEFT JOIN contact_keys ${a}k ON ${a}k.key = jidkey(${expr})
+     LEFT JOIN contacts ${a} ON ${a}.id = ${a}k.contact_id`;
+
 /** True when a contact from the bridge differs from the row already stored.
  *  The whole address book arrives on every sync pass, so this is what stops
  *  thousands of identical rows being rewritten — same name and same number
  *  means there is nothing to do. */
 export const contactChanged = (prev, c) =>
   !prev || prev.name !== (c.name ?? null) || prev.phone !== (c.phone ?? null);
+
+// --- contact writes -------------------------------------------------------
+const CQ = {
+  byKey:   db.prepare(`SELECT contact_id AS id FROM contact_keys WHERE key = ?`),
+  byPhone: db.prepare(`SELECT id FROM contacts WHERE phone = ? LIMIT 1`),
+  byLid:   db.prepare(`SELECT id FROM contacts WHERE lid = ? LIMIT 1`),
+  insert:  db.prepare(`INSERT INTO contacts (lid, phone, name, push_name, updated_ts)
+    VALUES (?,?,?,?,?)`),
+  // Null fields never clobber what is already known — a later event that only
+  // carries a pushName must not erase the address-book name.
+  update:  db.prepare(`UPDATE contacts SET
+      lid        = COALESCE(?, lid),
+      phone      = COALESCE(?, phone),
+      name       = COALESCE(?, name),
+      push_name  = COALESCE(?, push_name),
+      updated_ts = ?
+    WHERE id = ?`),
+  addKey:  db.prepare(`INSERT OR IGNORE INTO contact_keys (key, contact_id) VALUES (?,?)`),
+  byId:    db.prepare(`SELECT * FROM contacts WHERE id = ?`),
+  repoint: db.prepare(`UPDATE contact_keys SET contact_id = ? WHERE contact_id = ?`),
+  remove:  db.prepare(`DELETE FROM contacts WHERE id = ?`),
+};
+
+/** Fold two rows that turned out to be the same person into one.
+ *  Happens when a chat creates a phone-only row before the LID that belongs to
+ *  it is ever seen — the two only become connectable later. */
+function mergeContacts(keepId, dropId) {
+  const drop = CQ.byId.get(dropId);
+  if (drop) CQ.update.run(drop.lid, drop.phone, drop.name, drop.push_name, drop.updated_ts, keepId);
+  CQ.repoint.run(keepId, dropId);   // the ids follow the person
+  CQ.remove.run(dropId);
+}
+
+/** Store one contact against the person it belongs to, creating them if new.
+ *  The same person arrives twice — once under their LID, once under their phone
+ *  — and both calls must land on a single row. */
+function upsertContact(key, lid, phone, name, pushName, ts) {
+  const byKey = CQ.byKey.get(key)?.id ?? null;
+  const byPhone = phone ? (CQ.byPhone.get(phone)?.id ?? null) : null;
+  const byLid = lid ? (CQ.byLid.get(lid)?.id ?? null) : null;
+
+  let id = byKey ?? byPhone ?? byLid;
+  if (id == null) {
+    id = Number(CQ.insert.run(lid, phone, name, pushName, ts).lastInsertRowid);
+  } else {
+    for (const other of [byPhone, byLid]) if (other != null && other !== id) mergeContacts(id, other);
+    CQ.update.run(lid, phone, name, pushName, ts, id);
+  }
+  for (const k of new Set([key, phone, lid].filter(Boolean))) CQ.addKey.run(k, id);
+  return id;
+}
 
 const S = {
   insertInbound: db.prepare(`INSERT OR IGNORE INTO messages
@@ -125,14 +210,14 @@ const S = {
       (SELECT m.from_me FROM messages m WHERE m.chat_id=c.id ORDER BY m.ts DESC, m.rowid DESC LIMIT 1) AS preview_out
     FROM chats c
     LEFT JOIN users u ON u.id = c.assigned_to
-    LEFT JOIN contacts ct ON ct.key = jidkey(c.id)
+    ${joinContact('ct', 'c.id')}
     ORDER BY c.last_ts DESC LIMIT 300`),
   chat: db.prepare(`SELECT c.*, u.name AS assignee_name,
       CASE WHEN c.is_group = 0 THEN ct.name END AS display_name,
       ct.phone AS contact_phone
     FROM chats c
     LEFT JOIN users u ON u.id = c.assigned_to
-    LEFT JOIN contacts ct ON ct.key = jidkey(c.id)
+    ${joinContact('ct', 'c.id')}
     WHERE c.id = ?`),
   // The newest 500, shown oldest-first. Ordering ASC before the LIMIT would take
   // the oldest 500 instead — invisible until a chat passes 500 messages, then
@@ -146,7 +231,7 @@ const S = {
       (SELECT COALESCE(qc.name, qu.name, CASE WHEN q.from_me THEN 'You' END)
          FROM messages q
          LEFT JOIN users qu ON qu.id = q.sent_by
-         LEFT JOIN contacts qc ON qc.key = jidkey(q.sender_id)
+         ${joinContact('qc', 'q.sender_id')}
          WHERE m.reply_to IS NOT NULL AND (q.id = m.reply_to OR q.wa_id = m.reply_to)
          LIMIT 1) AS reply_author,
       (SELECT q.media_type FROM messages q
@@ -154,7 +239,7 @@ const S = {
          LIMIT 1) AS reply_media
       FROM messages m
       LEFT JOIN users u ON u.id = m.sent_by
-      LEFT JOIN contacts ct ON ct.key = jidkey(m.sender_id)
+      ${joinContact('ct', 'm.sender_id')}
       WHERE m.chat_id = ? ORDER BY m.ts DESC, m.rowid DESC LIMIT 500
     ) ORDER BY ts ASC, rid ASC`),
 
@@ -168,7 +253,7 @@ const S = {
       (SELECT COALESCE(qc.name, qu.name, CASE WHEN q.from_me THEN 'You' END)
          FROM messages q
          LEFT JOIN users qu ON qu.id = q.sent_by
-         LEFT JOIN contacts qc ON qc.key = jidkey(q.sender_id)
+         ${joinContact('qc', 'q.sender_id')}
          WHERE m.reply_to IS NOT NULL AND (q.id = m.reply_to OR q.wa_id = m.reply_to)
          LIMIT 1) AS reply_author,
       (SELECT q.media_type FROM messages q
@@ -176,7 +261,7 @@ const S = {
          LIMIT 1) AS reply_media
     FROM messages m
     LEFT JOIN users u ON u.id = m.sent_by
-    LEFT JOIN contacts ct ON ct.key = jidkey(m.sender_id)
+    ${joinContact('ct', 'm.sender_id')}
     WHERE m.chat_id = ? AND m.ts < ? ORDER BY m.ts DESC, m.rowid DESC LIMIT 150`),
   threadFrom: db.prepare(`SELECT m.*, u.name AS agent_name,
       ct.name AS sender_display, ct.phone AS sender_phone,
@@ -186,7 +271,7 @@ const S = {
       (SELECT COALESCE(qc.name, qu.name, CASE WHEN q.from_me THEN 'You' END)
          FROM messages q
          LEFT JOIN users qu ON qu.id = q.sent_by
-         LEFT JOIN contacts qc ON qc.key = jidkey(q.sender_id)
+         ${joinContact('qc', 'q.sender_id')}
          WHERE m.reply_to IS NOT NULL AND (q.id = m.reply_to OR q.wa_id = m.reply_to)
          LIMIT 1) AS reply_author,
       (SELECT q.media_type FROM messages q
@@ -194,7 +279,7 @@ const S = {
          LIMIT 1) AS reply_media
     FROM messages m
     LEFT JOIN users u ON u.id = m.sent_by
-    LEFT JOIN contacts ct ON ct.key = jidkey(m.sender_id)
+    ${joinContact('ct', 'm.sender_id')}
     WHERE m.chat_id = ? AND m.ts >= ? ORDER BY m.ts ASC, m.rowid ASC LIMIT 350`),
 
   // Search runs over the whole conversation, not just the loaded window.
@@ -211,7 +296,7 @@ const S = {
       (SELECT COALESCE(qc.name, qu.name, CASE WHEN q.from_me THEN 'You' END)
          FROM messages q
          LEFT JOIN users qu ON qu.id = q.sent_by
-         LEFT JOIN contacts qc ON qc.key = jidkey(q.sender_id)
+         ${joinContact('qc', 'q.sender_id')}
          WHERE m.reply_to IS NOT NULL AND (q.id = m.reply_to OR q.wa_id = m.reply_to)
          LIMIT 1) AS reply_author,
       (SELECT q.media_type FROM messages q
@@ -219,7 +304,7 @@ const S = {
          LIMIT 1) AS reply_media
     FROM messages m
     LEFT JOIN users u ON u.id = m.sent_by
-    LEFT JOIN contacts ct ON ct.key = jidkey(m.sender_id)
+    ${joinContact('ct', 'm.sender_id')}
     WHERE m.id = ?`),
   unreadKeys: db.prepare(`SELECT id, sender_id FROM messages
     WHERE chat_id = ? AND from_me = 0 AND ts > ? AND wa_id IS NOT NULL LIMIT 50`),
@@ -269,17 +354,12 @@ const S = {
     WHERE m.from_me = 1 AND m.status = 'sent' AND m.ts >= ? AND m.ts < ?
     GROUP BY u.id ORDER BY messages DESC`),
 
-  // Null fields never clobber what is already known — a later event that only
-  // carries a pushName must not erase the address-book name.
-  upsertContact: db.prepare(`INSERT INTO contacts (key, lid, phone, name, push_name, updated_ts)
-    VALUES (?,?,?,?,?,?)
-    ON CONFLICT(key) DO UPDATE SET
-      lid        = COALESCE(excluded.lid, contacts.lid),
-      phone      = COALESCE(excluded.phone, contacts.phone),
-      name       = COALESCE(excluded.name, contacts.name),
-      push_name  = COALESCE(excluded.push_name, contacts.push_name),
-      updated_ts = excluded.updated_ts`),
-  contactsAll: db.prepare(`SELECT key, name, phone FROM contacts`),
+  upsertContact,
+  // Keyed by id because that is what the bridge sends and what the dedupe in
+  // syncContacts compares against.
+  contactsAll: db.prepare(`SELECT k.key AS key, c.name, c.phone
+    FROM contact_keys k JOIN contacts c ON c.id = k.contact_id`),
+  // People, not ids — this is the number the UI shows.
   contactCount: db.prepare(`SELECT COUNT(*) AS c FROM contacts`),
 
   userByName: db.prepare(`SELECT * FROM users WHERE username = ?`),
@@ -304,6 +384,22 @@ const S = {
   dropSession: db.prepare(`DELETE FROM sessions WHERE token = ?`),
 };
 export default S;
+
+// Drain the pre-split table now that upsertContact exists to fold the twins.
+// Phone-bearing rows go first so the person is created under their real number
+// and the LID row attaches to them, rather than the other way round.
+if (legacyContacts) {
+  const rows = db.prepare(`SELECT key, lid, phone, name, push_name, updated_ts
+    FROM contacts_legacy ORDER BY phone IS NULL, key`).all();
+  db.exec('BEGIN');
+  try {
+    for (const r of rows) upsertContact(r.key, r.lid, r.phone, r.name, r.push_name, r.updated_ts);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  db.exec('DROP TABLE contacts_legacy');
+  const people = S.contactCount.get().c;
+  console.log(`📇 contacts: ${rows.length} id rows folded into ${people} people`);
+}
 
 /** Record one mirrored message and keep its chat row current.
  *  Returns true if it was new (false = duplicate echo, already stored). */

@@ -102,7 +102,7 @@ async function syncContacts() {
           const t = now();
           db.exec('BEGIN');
           try {
-            for (const c of fresh) S.upsertContact.run(c.key, c.lid ?? null, c.phone ?? null, c.name ?? null, c.notify ?? null, t);
+            for (const c of fresh) S.upsertContact(c.key, c.lid ?? null, c.phone ?? null, c.name ?? null, c.notify ?? null, t);
             db.exec('COMMIT');
           } catch (e) { db.exec('ROLLBACK'); throw e; }
           broadcast({ type: 'chats' });
