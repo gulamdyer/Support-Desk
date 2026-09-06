@@ -20,7 +20,12 @@ CREATE TABLE IF NOT EXISTS users (
   pw_hash    TEXT NOT NULL,
   created_ts INTEGER NOT NULL,
   is_admin   INTEGER NOT NULL DEFAULT 0,
-  active     INTEGER NOT NULL DEFAULT 1
+  active     INTEGER NOT NULL DEFAULT 1,
+  -- The break-glass account seeded from ADMIN_USERNAME. It belongs to whoever
+  -- runs the server, not to the customer using it, so it is kept out of the
+  -- team list, the seat count and every bulk action. Hiding it in the UI would
+  -- not be enough — the rules below are enforced in SQL and in the routes.
+  is_owner   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -109,6 +114,7 @@ CREATE INDEX IF NOT EXISTS idx_contacts_lid   ON contacts(lid)   WHERE lid IS NO
 for (const [col, ddl] of [
   ['is_admin', 'ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0'],
   ['active', 'ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1'],
+  ['is_owner', 'ALTER TABLE users ADD COLUMN is_owner INTEGER NOT NULL DEFAULT 0'],
 ]) {
   if (!db.prepare(`PRAGMA table_info(users)`).all().some((c) => c.name === col)) db.exec(ddl);
 }
@@ -351,7 +357,8 @@ const S = {
       COUNT(m.id) AS messages,
       COUNT(DISTINCT m.chat_id) AS customers
     FROM messages m JOIN users u ON u.id = m.sent_by
-    WHERE m.from_me = 1 AND m.status = 'sent' AND m.ts >= ? AND m.ts < ?
+    WHERE m.from_me = 1 AND m.status = 'sent' AND u.is_owner = 0
+      AND m.ts >= ? AND m.ts < ?
     GROUP BY u.id ORDER BY messages DESC`),
 
   upsertContact,
@@ -363,15 +370,20 @@ const S = {
   contactCount: db.prepare(`SELECT COUNT(*) AS c FROM contacts`),
 
   userByName: db.prepare(`SELECT * FROM users WHERE username = ?`),
-  userById: db.prepare(`SELECT id, username, name, is_admin, active FROM users WHERE id = ?`),
+  userById: db.prepare(`SELECT id, username, name, is_admin, active, is_owner FROM users WHERE id = ?`),
   addUser: db.prepare(`INSERT INTO users (username, name, pw_hash, created_ts, is_admin) VALUES (?,?,?,?,?)`),
   // Deactivated members keep their rows so old replies still carry their name;
   // they free their seat and can never sign in again.
   userList: db.prepare(`SELECT u.id, u.username, u.name, u.is_admin, u.active, u.created_ts,
       (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id) AS sessions
-    FROM users u ORDER BY u.active DESC, u.is_admin DESC, u.username`),
-  activeCount: db.prepare(`SELECT COUNT(*) AS c FROM users WHERE active = 1`),
-  activeUsers: db.prepare(`SELECT id, username, name FROM users WHERE active = 1`),
+    FROM users u WHERE u.is_owner = 0
+    ORDER BY u.active DESC, u.is_admin DESC, u.username`),
+  // Seats and bulk password resets are the customer's team only. The owner
+  // account neither consumes a seat nor has its password overwritten — that
+  // one lives in the deployment environment.
+  activeCount: db.prepare(`SELECT COUNT(*) AS c FROM users WHERE active = 1 AND is_owner = 0`),
+  activeUsers: db.prepare(`SELECT id, username, name FROM users WHERE active = 1 AND is_owner = 0`),
+  setOwner: db.prepare(`UPDATE users SET is_owner = ? WHERE id = ?`),
   setActive: db.prepare(`UPDATE users SET active = ? WHERE id = ?`),
   setPassword: db.prepare(`UPDATE users SET pw_hash = ? WHERE id = ?`),
   setAdmin: db.prepare(`UPDATE users SET is_admin = ? WHERE id = ?`),

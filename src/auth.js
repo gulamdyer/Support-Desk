@@ -100,9 +100,13 @@ export async function seedAdmin() {
   const existing = S.userByName.get(username);
   if (existing) {
     if (!existing.is_admin) { S.setAdmin.run(1, existing.id); console.log(`👑 Promoted "${username}" to admin.`); }
+    // Marks the account on every boot, so an existing deployment adopts the
+    // rule without a manual step and it cannot drift back into the team list.
+    if (!existing.is_owner) { S.setOwner.run(1, existing.id); console.log(`🔒 "${username}" is the owner account — hidden from the team.`); }
     return;
   }
   if (password.length < 8) return console.error('⚠️  ADMIN_PASSWORD is under 8 characters — admin not created.');
   S.addUser.run(username, process.env.ADMIN_NAME || 'Administrator', await hashPassword(password), now(), 1);
-  console.log(`👑 Admin "${username}" created from the environment.`);
+  S.setOwner.run(1, S.userByName.get(username).id);
+  console.log(`👑 Owner "${username}" created from the environment (hidden from the team).`);
 }

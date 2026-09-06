@@ -20,7 +20,7 @@ const CLAIM_TTL = 2 * 3600; // an untouched claim is released so nobody is block
 const PLACEHOLDER_BODY = /^\[(image|audio|video|document|sticker|media) received\]$/i;
 const realBody = (b) => (PLACEHOLDER_BODY.test(b || '') ? '' : (b || ''));
 
-const MAX_TEAM = Number(process.env.MAX_TEAM || 15); // seats, admin included
+const MAX_TEAM = Number(process.env.MAX_TEAM || 15); // seats for the customer's team; the owner account does not use one
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || 16); // WhatsApp itself balks well before this
 
 // Extension decides how WhatsApp renders it. Anything unlisted goes as a document,
@@ -204,7 +204,9 @@ app.post('/api/admin/users', requireAdmin, wrap(async (req, res) => {
 app.post('/api/admin/users/:id/password', requireAdmin, wrap(async (req, res) => {
   const user = S.userById.get(Number(req.params.id));
   const password = String(req.body?.password || '');
-  if (!user) return res.status(404).json({ error: 'No such user.' });
+  // 404, not 403: the owner account is not listed, so it must not be
+  // discoverable by probing ids either.
+  if (!user || user.is_owner) return res.status(404).json({ error: 'No such user.' });
   if (password.length < MIN_PW) return res.status(422).json({ error: `Password must be at least ${MIN_PW} characters.` });
   S.setPassword.run(await hashPassword(password), user.id);
   S.dropUserSessions.run(user.id); // the old password's sessions die with it
@@ -286,7 +288,7 @@ app.post('/api/chats/:id/send', (req, res) => {
 app.post('/api/admin/users/:id/active', requireAdmin, (req, res) => {
   const user = S.userById.get(Number(req.params.id));
   const active = req.body?.active === true;
-  if (!user) return res.status(404).json({ error: 'No such user.' });
+  if (!user || user.is_owner) return res.status(404).json({ error: 'No such user.' });
   if (user.id === req.user.id) return res.status(422).json({ error: 'You cannot remove your own account.' });
   if (!active && user.is_admin && S.userList.all().filter((u) => u.is_admin && u.active).length < 2) {
     return res.status(422).json({ error: 'That is the only admin — promote someone else first.' });
@@ -306,7 +308,7 @@ app.post('/api/admin/logout-users', requireAdmin, (req, res) => {
   const names = [];
   for (const id of ids) {
     const u = S.userById.get(id);
-    if (!u) continue;
+    if (!u || u.is_owner) continue;   // never sign the owner out from the UI
     S.dropUserSessions.run(id);
     names.push(u.name);
   }
