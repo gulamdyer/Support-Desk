@@ -383,6 +383,11 @@ const S = {
   // one lives in the deployment environment.
   activeCount: db.prepare(`SELECT COUNT(*) AS c FROM users WHERE active = 1 AND is_owner = 0`),
   activeUsers: db.prepare(`SELECT id, username, name FROM users WHERE active = 1 AND is_owner = 0`),
+  // Who a one-click password reset applies to. Agents share a password so a
+  // shift can hand over; admins keep their own, because an admin who can be
+  // signed in as by the whole floor is not an admin. The owner is never here.
+  agentAccounts: db.prepare(`SELECT id, username, name FROM users
+    WHERE active = 1 AND is_owner = 0 AND is_admin = 0`),
   setOwner: db.prepare(`UPDATE users SET is_owner = ? WHERE id = ?`),
   setActive: db.prepare(`UPDATE users SET active = ? WHERE id = ?`),
   setPassword: db.prepare(`UPDATE users SET pw_hash = ? WHERE id = ?`),

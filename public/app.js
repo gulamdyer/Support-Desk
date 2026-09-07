@@ -966,9 +966,12 @@ $('resetAllForm').onsubmit = async (e) => {
     const password = new FormData(e.target).get('password');
     const { count } = await api('/api/admin/reset-all-passwords', { password });
     $('resetAllForm').hidden = true; e.target.reset();
-    // The admin's own session is one of the ones just destroyed, so there is
-    // nothing left to reload — close up and send them to sign in with the new one.
-    sessionExpired(`All ${count} passwords were changed. Sign in with the new shared password.`);
+    // Admins keep their own password, so the person who just did this is still
+    // signed in — reload the list rather than throwing them back to the login.
+    await loadTeam();
+    toast(count
+      ? `${count} agent${count === 1 ? '' : 's'} now share this password and have been signed out.`
+      : 'No agent accounts to change — admins keep their own passwords.', 'ok');
   } catch (err) { $('teamErr').textContent = err.message; }
 };
 

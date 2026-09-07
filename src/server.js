@@ -337,19 +337,21 @@ app.post('/api/admin/logout-users', requireAdmin, (req, res) => {
   res.json({ ok: true, signedOut: names });
 });
 
-/** Set ONE shared password across the whole team, in a single action.
- *  Every existing session dies, so everybody signs in again with the new one. */
+/** Set ONE shared password across the agents, in a single action.
+ *  Admins are deliberately excluded: they keep their own credentials, so the
+ *  admin running this stays signed in and an admin account never becomes one
+ *  the whole floor can sign in as. Every agent session dies. */
 app.post('/api/admin/reset-all-passwords', requireAdmin, wrap(async (req, res) => {
   const password = String(req.body?.password || '');
   if (password.length < MIN_PW) return res.status(422).json({ error: `Password must be at least ${MIN_PW} characters.` });
   const hash = await hashPassword(password); // one hash, reused: it is one password
-  const users = S.activeUsers.all();
+  const users = S.agentAccounts.all();
   db.exec('BEGIN');
   try {
     for (const u of users) { S.setPassword.run(hash, u.id); S.dropUserSessions.run(u.id); }
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
-  res.json({ ok: true, count: users.length });
+  res.json({ ok: true, count: users.length, names: users.map((u) => u.name) });
 }));
 
 // --- reporting ------------------------------------------------------------

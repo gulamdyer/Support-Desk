@@ -47,6 +47,16 @@ check('a team-wide password reset never touches the owner', () => {
   assert.deepEqual(ids.sort(), [clientAdmin.id, agent.id].sort());
 });
 
+// A shared password is for a shift handing over, not for admins: an admin the
+// whole floor can sign in as is not an admin, and the person clicking the
+// button would sign themselves out.
+check('a one-click reset changes agents only', () => {
+  const targets = S.agentAccounts.all().map((u) => u.username);
+  assert.deepEqual(targets, ['ali'], 'only the non-admin agent');
+  assert.ok(!targets.includes('client.admin'), 'admins keep their own password');
+  assert.ok(!targets.includes('admin'), 'the owner is never touched');
+});
+
 // Hiding it in a list is not protection; the routes reject it by id, and they
 // need this flag to do so.
 check('a lookup by id still reveals the flag the routes guard on', () => {
@@ -68,4 +78,4 @@ check('the customer still has exactly one admin of their own', () => {
 });
 
 rmSync(dir, { recursive: true, force: true });
-console.log(`✅ team: ${n}/${n} — the owner account is invisible and untouchable`);
+console.log(`✅ team: ${n}/${n} — owner hidden, shared password is agents only`);

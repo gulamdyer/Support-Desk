@@ -219,10 +219,10 @@
         <button id="resetAll" class="btn-sm">Set one shared password…</button>
       </div>
       <form id="resetAllForm" class="reset-all" hidden>
-        <p class="hint warn-hint">⚠ Every active member gets the <strong>same</strong> password and is signed out. Anyone can then sign in as anyone, so replies can no longer be traced to a person.</p>
+        <p class="hint warn-hint">⚠ Every <strong>agent</strong> gets the same password and is signed out. Admins keep their own, so you stay signed in. Agents can then sign in as one another, so their replies can no longer be traced to a person.</p>
         <div class="reset-all-row">
           <input name="password" type="text" placeholder="New shared password (min 8 characters)" minlength="8" autocomplete="off" required>
-          <button type="submit" class="btn-sm primary">Apply to all</button>
+          <button type="submit" class="btn-sm primary">Apply to agents</button>
           <button type="button" id="resetAllCancel" class="btn-sm">Cancel</button>
         </div>
       </form>
