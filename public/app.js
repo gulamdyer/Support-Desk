@@ -164,7 +164,7 @@ function renderMessages(messages, isGroup) {
       : m.from_me ? '✓ sent' : '';
     const url = m.media_path ? `/media/${encodeURIComponent(m.media_path.split('/').pop())}` : '';
     const media = !m.media_path ? ''
-      : m.media_type === 'image' ? `<img src="${url}" alt="">`
+      : m.media_type === 'image' ? `<img src="${url}" alt="" draggable="true" data-dl="${url}" data-dlname="${esc(fileLabel(m))}">`
       : m.media_type === 'audio' ? `
         <div class="voice" data-src="${url}">
           <button class="voice-play" aria-label="Play voice message">
@@ -174,7 +174,7 @@ function renderMessages(messages, isGroup) {
           <div class="voice-wave"></div>
           <span class="voice-time">0:00</span>
         </div>`
-      : `<a href="${url}" target="_blank">📎 ${esc(fileLabel(m))}</a>`;
+      : `<a href="${url}" target="_blank" draggable="true" data-dl="${url}" data-dlname="${esc(fileLabel(m))}">📎 ${esc(fileLabel(m))}</a>`;
     return sep + `<div class="msg ${m.from_me ? 'out' : ''} ${m.status === 'failed' ? 'fail' : ''}">
       <button class="msg-caret" data-menu="${esc(m.id)}" title="Message actions" aria-label="Message actions" aria-haspopup="menu"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
       ${!m.from_me && isGroup && m.sender_id ? `<div class="from">${esc(senderOf(m))}</div>` : ''}
@@ -187,7 +187,56 @@ function renderMessages(messages, isGroup) {
   setTimeout(() => { autoScrolling = Math.max(0, autoScrolling - 1); }, 0);
   initVoice();
   paintCurrentHit();
+  renderPicked();   // the thread is rebuilt wholesale; re-mark what is selected
 }
+
+// Dragging an attachment onto the desktop saves it. Chrome reads DownloadURL;
+// other browsers ignore it and drag the plain link instead, which still works
+// as a link. The file itself is behind the session cookie, and the browser
+// sends it because this is a same-site request it makes itself.
+$('messages').addEventListener('dragstart', (e) => {
+  const el = e.target.closest('[data-dl]');
+  if (!el) return;
+  const url = new URL(el.dataset.dl, location.href).href;
+  const name = el.dataset.dlname || 'attachment';
+  e.dataTransfer.setData('DownloadURL', `application/octet-stream:${name}:${url}`);
+  e.dataTransfer.setData('text/uri-list', url);
+  e.dataTransfer.setData('text/plain', url);
+  e.dataTransfer.effectAllowed = 'copy';
+});
+
+// --- selecting several messages to forward -------------------------------
+let picked = new Set();
+
+function renderPicked() {
+  const on = picked.size > 0;
+  $('messages').classList.toggle('picking', on);
+  $('pickBar').hidden = !on;
+  $('pickCount').textContent = on ? `${picked.size} selected` : '';
+  document.querySelectorAll('#messages .msg').forEach((el) => {
+    const id = el.querySelector('[data-menu]')?.dataset.menu;
+    el.classList.toggle('picked', !!id && picked.has(id));
+  });
+}
+
+function togglePick(id) {
+  if (picked.has(id)) picked.delete(id); else picked.add(id);
+  renderPicked();
+}
+
+const clearPicked = () => { picked = new Set(); renderPicked(); };
+$('pickCancel').onclick = clearPicked;
+$('pickForward').onclick = () => { if (picked.size) openForward([...picked]); };
+
+// While picking, a tap anywhere on a message toggles it rather than opening it.
+$('messages').addEventListener('click', (e) => {
+  if (!picked.size) return;
+  const row = e.target.closest('.msg');
+  const id = row?.querySelector('[data-menu]')?.dataset.menu;
+  if (!id) return;
+  e.preventDefault();
+  togglePick(id);
+});
 
 function paintCurrentHit() {
   document.querySelectorAll('.msg.hit-on').forEach((el) => el.classList.remove('hit-on'));
@@ -388,7 +437,8 @@ $('msgMenu').onclick = (e) => {
   closeMsgMenu();
   if (!act || !id) return;
   if (act === 'reply') startReply(id);
-  if (act === 'forward') openForward(id);
+  if (act === 'select') { togglePick(id); }
+  if (act === 'forward') openForward([id]);
   if (act === 'copy') copyMessage(id);
 };
 document.addEventListener('click', (e) => {
@@ -518,16 +568,22 @@ document.querySelectorAll('.date-quick .chip').forEach((b) => {
 });
 
 // --- forward -------------------------------------------------------------
-let forwarding = null; // the message being forwarded
+let forwarding = null; // the messages being forwarded, in the order picked
 
-function openForward(id) {
-  const msg = msgById(id);
-  if (!msg) return;
-  forwarding = msg;
+function openForward(ids) {
+  const msgs = ids.map(msgById).filter(Boolean);
+  if (!msgs.length) return;
+  forwarding = msgs;
   $('fwdErr').textContent = '';
   $('fwdSearch').value = '';
-  const what = msg.media_path ? `${PREVIEW_LABEL[msg.media_type] || '📎 Attachment'}${realBody(msg.body) ? ' · ' : ''}` : '';
-  $('fwdPreview').textContent = what + realBody(msg.body).slice(0, 160);
+  if (msgs.length === 1) {
+    const [msg] = msgs;
+    const what = msg.media_path ? `${PREVIEW_LABEL[msg.media_type] || '📎 Attachment'}${realBody(msg.body) ? ' · ' : ''}` : '';
+    $('fwdPreview').textContent = what + realBody(msg.body).slice(0, 160);
+  } else {
+    const files = msgs.filter((m) => m.media_path).length;
+    $('fwdPreview').textContent = `${msgs.length} messages` + (files ? ` · ${files} attachment${files === 1 ? '' : 's'}` : '');
+  }
   renderForwardList();
   $('fwdModal').hidden = false;
   $('fwdSearch').focus();
@@ -536,7 +592,7 @@ function openForward(id) {
 function renderForwardList() {
   const q = $('fwdSearch').value.trim().toLowerCase();
   const rows = chats
-    .filter((c) => c.id !== forwarding?.chat_id)
+    .filter((c) => c.id !== forwarding?.[0]?.chat_id)
     .filter((c) => !q || nameOf(c).toLowerCase().includes(q) || c.id.includes(q))
     .slice(0, 40);
   $('fwdList').innerHTML = rows.length ? rows.map((c) => `
@@ -548,17 +604,33 @@ function renderForwardList() {
 }
 
 $('fwdSearch').oninput = renderForwardList;
+// One request per message, in the order they were picked. Same reasoning as
+// attachments: each one meets the gate on its own, and the server never grows
+// a route that fans several messages out at once.
 $('fwdList').onclick = async (e) => {
   const row = e.target.closest('[data-to]');
-  if (!row || !forwarding) return;
+  if (!row || !forwarding?.length) return;
   $('fwdErr').textContent = '';
-  try {
-    const { chat } = await api(`/api/messages/${encodeURIComponent(forwarding.id)}/forward`, { to: row.dataset.to });
-    $('fwdModal').hidden = true;
-    forwarding = null;
-    toast(`Forwarded to ${chat.name}.`, 'ok');
-    loadChats();
-  } catch (err) { $('fwdErr').textContent = err.message; }
+  const msgs = forwarding;
+  let chatName = '';
+  const failed = [];
+
+  for (const m of msgs) {
+    try {
+      const { chat } = await api(`/api/messages/${encodeURIComponent(m.id)}/forward`, { to: row.dataset.to });
+      chatName = chat.name;
+    } catch (err) { failed.push(err.message); }
+  }
+
+  const sent = msgs.length - failed.length;
+  if (!sent) { $('fwdErr').textContent = failed[0] || 'Nothing could be forwarded.'; return; }
+  $('fwdModal').hidden = true;
+  forwarding = null;
+  clearPicked();
+  toast(failed.length
+    ? `Forwarded ${sent} of ${msgs.length} to ${chatName}. ${failed[0]}`
+    : `Forwarded ${sent > 1 ? `${sent} messages` : ''} to ${chatName}.`.replace('  ', ' '), failed.length ? '' : 'ok');
+  loadChats();
 };
 const closeFwd = () => { $('fwdModal').hidden = true; forwarding = null; };
 $('fwdClose').onclick = closeFwd;
