@@ -83,6 +83,18 @@ const nameOf = (c) => c.is_group
   ? (c.name || maskNumber(c.id.split('@')[0]))
   : (c.display_name || maskNumber(c.contact_phone || c.id.split('@')[0]));
 // Outbound files are stored with a random prefix; show the name the agent picked.
+const MIME = {
+  pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+  gif: 'image/gif', webp: 'image/webp', heic: 'image/heic', svg: 'image/svg+xml',
+  doc: 'application/msword', xls: 'application/vnd.ms-excel', ppt: 'application/vnd.ms-powerpoint',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  csv: 'text/csv', txt: 'text/plain', zip: 'application/zip', rar: 'application/vnd.rar',
+  mp3: 'audio/mpeg', ogg: 'audio/ogg', opus: 'audio/ogg', m4a: 'audio/mp4', mp4: 'video/mp4',
+};
+const mimeOf = (name) => MIME[String(name).toLowerCase().split('.').pop()] || 'application/octet-stream';
+
 const fileLabel = (m) => (m.media_path || '').split('/').pop().replace(/^[0-9a-f]{8}-/, '')
   || m.media_type || 'file';
 const senderOf = (m) => m.sender_display || maskNumber(m.sender_phone || m.sender_id);
@@ -164,7 +176,7 @@ function renderMessages(messages, isGroup) {
       : m.from_me ? '✓ sent' : '';
     const url = m.media_path ? `/media/${encodeURIComponent(m.media_path.split('/').pop())}` : '';
     const media = !m.media_path ? ''
-      : m.media_type === 'image' ? `<img src="${url}" alt="" draggable="true" data-dl="${url}" data-dlname="${esc(fileLabel(m))}">`
+      : m.media_type === 'image' ? `<img src="${url}" alt="" draggable="true" data-dl="${url}?download=1" data-dlname="${esc(fileLabel(m))}">`
       : m.media_type === 'audio' ? `
         <div class="voice" data-src="${url}">
           <button class="voice-play" aria-label="Play voice message">
@@ -174,7 +186,7 @@ function renderMessages(messages, isGroup) {
           <div class="voice-wave"></div>
           <span class="voice-time">0:00</span>
         </div>`
-      : `<a href="${url}" target="_blank" draggable="true" data-dl="${url}" data-dlname="${esc(fileLabel(m))}">📎 ${esc(fileLabel(m))}</a>`;
+      : `<a href="${url}" target="_blank" draggable="true" data-dl="${url}?download=1" data-dlname="${esc(fileLabel(m))}">📎 ${esc(fileLabel(m))}</a>`;
     return sep + `<div class="msg ${m.from_me ? 'out' : ''} ${m.status === 'failed' ? 'fail' : ''}">
       <button class="msg-caret" data-menu="${esc(m.id)}" title="Message actions" aria-label="Message actions" aria-haspopup="menu"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
       ${!m.from_me && isGroup && m.sender_id ? `<div class="from">${esc(senderOf(m))}</div>` : ''}
@@ -198,10 +210,16 @@ $('messages').addEventListener('dragstart', (e) => {
   const el = e.target.closest('[data-dl]');
   if (!el) return;
   const url = new URL(el.dataset.dl, location.href).href;
-  const name = el.dataset.dlname || 'attachment';
-  e.dataTransfer.setData('DownloadURL', `application/octet-stream:${name}:${url}`);
-  e.dataTransfer.setData('text/uri-list', url);
-  e.dataTransfer.setData('text/plain', url);
+  // ':' is the field separator in the DownloadURL string, so it cannot survive
+  // inside the filename.
+  const name = (el.dataset.dlname || 'attachment').replace(/:/g, '-');
+
+  // Dragging an <a> or an <img> puts its URL on the pasteboard automatically,
+  // and macOS prefers that flavour: the Finder then writes a .webloc shortcut,
+  // or nothing at all, instead of accepting the file Chrome is offering. Clear
+  // the URL flavours so the promised download is the only thing on offer.
+  e.dataTransfer.clearData();
+  e.dataTransfer.setData('DownloadURL', `${mimeOf(name)}:${name}:${url}`);
   e.dataTransfer.effectAllowed = 'copy';
 });
 
@@ -419,9 +437,25 @@ function closeMsgMenu() {
   menuFor = null;
 }
 
+/** Save an attachment without involving the operating system's drag protocol —
+ *  the dependable path, and the only one Safari has. */
+function downloadMessage(id) {
+  const m = msgById(id);
+  if (!m?.media_path) return toast('That message has no attachment.');
+  const name = fileLabel(m);
+  const a = document.createElement('a');
+  a.href = `/media/${encodeURIComponent(m.media_path.split('/').pop())}?download=1`;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 function openMsgMenu(btn, id) {
   menuFor = id;
   const menu = $('msgMenu');
+  // Only offer Download where there is something to download.
+  menu.querySelector('[data-act="download"]').hidden = !msgById(id)?.media_path;
   menu.hidden = false;
   btn.classList.add('open');
   // Anchor under the chevron, nudged back inside the viewport when near an edge.
@@ -440,6 +474,7 @@ $('msgMenu').onclick = (e) => {
   if (act === 'select') { togglePick(id); }
   if (act === 'forward') openForward([id]);
   if (act === 'copy') copyMessage(id);
+  if (act === 'download') downloadMessage(id);
 };
 document.addEventListener('click', (e) => {
   if (!e.target.closest('#msgMenu') && !e.target.closest('.msg-caret')) closeMsgMenu();

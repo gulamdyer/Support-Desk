@@ -508,7 +508,10 @@ app.get('/media/:file', requireAuth, (req, res) => {
   // can't execute as same-origin script against the inbox.
   const ext = name.toLowerCase().split('.').pop();
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  if (kindOf(ext) === 'document') {
+  // ?download=1 is what a drag onto the desktop and the Download action ask
+  // for: an image is normally served inline so it can render in the thread,
+  // but when it is being saved it has to arrive as a file.
+  if ('download' in req.query || kindOf(ext) === 'document') {
     res.setHeader('Content-Disposition', `attachment; filename="${name.replace(/"/g, '')}"`);
   }
   res.sendFile(file);
