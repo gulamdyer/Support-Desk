@@ -245,8 +245,17 @@ button { font: inherit; cursor: pointer; }
   transition: color .15s, border-color .15s; }
 .attach-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
 .attach-btn:disabled { opacity: .4; cursor: not-allowed; }
-.attachment { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px;
+.attachment { grid-column: 1 / -1; display: flex; align-items: flex-start; gap: 10px;
   padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); }
+.attach-list { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.attach-chip { display: flex; align-items: center; gap: 8px; max-width: 100%;
+  padding: 4px 4px 4px 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.attach-chip .attach-text { max-width: 180px; }
+.attach-chip .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.attach-chip .attach-thumb, .attach-chip .attach-icon { width: 28px; height: 28px; }
+/* Dropping files anywhere over the thread is the same as picking them. */
+.thread.dropping { outline: 2px dashed var(--accent); outline-offset: -8px; background: var(--accent-soft); }
+.msg .body[draggable="true"], .msg .doc[draggable="true"] { cursor: grab; }
 .attach-thumb { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; flex: 0 0 auto; }
 .attach-icon { width: 40px; height: 40px; border-radius: 8px; display: grid; place-items: center;
   background: var(--accent-soft); color: var(--accent); flex: 0 0 auto; }

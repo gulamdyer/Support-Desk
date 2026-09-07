@@ -274,7 +274,7 @@ const SEND_LABEL = $('send').innerHTML;
 function updateSendState() {
   const blocked = $('input').disabled;
   $('attach').disabled = blocked;
-  $('send').disabled = blocked || (!input.value.trim() && !pending);
+  $('send').disabled = blocked || (!input.value.trim() && !pending.length);
 }
 input.addEventListener('input', updateSendState);
 input.addEventListener('input', () => {
@@ -288,7 +288,7 @@ $('send').onclick = send;
 
 async function send() {
   if (!open) return;
-  if (pending) return sendAttachment();
+  if (pending.length) return sendAttachments();
   const body = input.value.trim();
   if (!body) return;
   $('send').disabled = true;
@@ -676,49 +676,101 @@ $('messages').addEventListener('click', async (e) => {
 });
 
 // --- attachments --------------------------------------------------------
-let pending = null; // { file, dataUrl }
+let pending = [];   // File[] — everything staged for the next send
 const MAX_MB = 16;
+// Each file becomes its own outbound message, and the pacer puts seconds
+// between them. A large batch would eat the hourly cap for the chat and take
+// minutes to drain, so stop well before that becomes a surprise.
+const MAX_FILES = 10;
 const prettySize = (n) => n < 1024 * 1024
   ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB`;
+const DOC_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>';
 
 function clearAttachment() {
-  pending = null;
+  pending.forEach((f) => f.previewUrl && URL.revokeObjectURL(f.previewUrl));
+  pending = [];
   $('file').value = '';
-  $('attachment').hidden = true;
-  $('attachThumb').hidden = true;
-  $('attachIcon').hidden = true;
+  renderAttachments();
+}
+
+function renderAttachments() {
+  $('attachment').hidden = pending.length === 0;
+  $('attachList').innerHTML = pending.map((f, i) => `
+    <span class="attach-chip">
+      ${f.previewUrl
+        ? `<img class="attach-thumb" src="${f.previewUrl}" alt="">`
+        : `<span class="attach-icon">${DOC_ICON}</span>`}
+      <span class="attach-text"><span class="n">${esc(f.name)}</span><span class="attach-size">${prettySize(f.size)}</span></span>
+      <button class="icon-btn" data-drop="${i}" title="Remove" aria-label="Remove ${esc(f.name)}">&times;</button>
+    </span>`).join('');
   updateSendState();
 }
 
-function showAttachment(file) {
-  pending = { file };
-  $('attachName').textContent = file.name;
-  $('attachSize').textContent = prettySize(file.size);
-  $('attachment').hidden = false;
-  const isImage = file.type.startsWith('image/');
-  $('attachThumb').hidden = !isImage;
-  $('attachIcon').hidden = isImage;
-  if (isImage) $('attachThumb').src = URL.createObjectURL(file);
-  updateSendState();
+/** Stage files from the picker, a paste, or a drop — all the same thing. */
+function addAttachments(list) {
+  const files = [...(list || [])];
+  if (!files.length) return;
+  const room = MAX_FILES - pending.length;
+  if (room <= 0) return toast(`That is already ${MAX_FILES} files — send these first.`);
+
+  const tooBig = files.filter((f) => f.size > MAX_MB * 1024 * 1024);
+  const ok = files.filter((f) => f.size <= MAX_MB * 1024 * 1024).slice(0, room);
+  tooBig.forEach((f) => toast(`"${f.name}" is ${prettySize(f.size)} — the limit is ${MAX_MB} MB.`));
+  if (files.length - tooBig.length > room) toast(`Only the first ${room} were added — ${MAX_FILES} files at a time.`);
+
+  for (const f of ok) {
+    // Held on the File object so the chip can be re-rendered without leaking a
+    // new blob URL each time.
+    if (f.type.startsWith('image/')) f.previewUrl = URL.createObjectURL(f);
+    pending.push(f);
+  }
+  $('file').value = '';   // so picking the same file again still fires onchange
+  renderAttachments();
 }
 
 $('attach').onclick = () => $('file').click();
 $('attachClear').onclick = clearAttachment;
-$('file').onchange = (e) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
-  if (file.size > MAX_MB * 1024 * 1024) {
-    toast(`"${file.name}" is ${prettySize(file.size)} — the limit is ${MAX_MB} MB.`);
-    $('file').value = '';
-    return;
-  }
-  showAttachment(file);
+$('file').onchange = (e) => addAttachments(e.target.files);
+$('attachList').onclick = (e) => {
+  const i = e.target.closest('[data-drop]')?.dataset.drop;
+  if (i === undefined) return;
+  const [gone] = pending.splice(Number(i), 1);
+  if (gone?.previewUrl) URL.revokeObjectURL(gone.previewUrl);
+  renderAttachments();
 };
 
 // Paste a screenshot straight into the composer.
 input.addEventListener('paste', (e) => {
-  const file = [...(e.clipboardData?.files || [])][0];
-  if (file) { e.preventDefault(); showAttachment(file); }
+  if (e.clipboardData?.files?.length) { e.preventDefault(); addAttachments(e.clipboardData.files); }
+});
+
+// --- drag files in from the desktop --------------------------------------
+// The whole thread is the target, not a thin strip: dropping a file "on the
+// conversation" is what people expect it to mean.
+const thread = document.querySelector('.thread');
+let dragDepth = 0;
+const draggingFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+
+thread.addEventListener('dragenter', (e) => {
+  if (!draggingFiles(e) || $('input').disabled || !open) return;
+  e.preventDefault();
+  if (++dragDepth === 1) thread.classList.add('dropping');
+});
+thread.addEventListener('dragover', (e) => {
+  if (!draggingFiles(e) || $('input').disabled || !open) return;
+  e.preventDefault();                       // without this the browser navigates
+  e.dataTransfer.dropEffect = 'copy';
+});
+thread.addEventListener('dragleave', () => {
+  if (dragDepth && --dragDepth === 0) thread.classList.remove('dropping');
+});
+thread.addEventListener('drop', (e) => {
+  if (!draggingFiles(e)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  thread.classList.remove('dropping');
+  if ($('input').disabled || !open) return toast('Open a conversation you can reply to first.');
+  addAttachments(e.dataTransfer.files);
 });
 
 const readAsBase64 = (file) => new Promise((resolve, reject) => {
@@ -728,25 +780,54 @@ const readAsBase64 = (file) => new Promise((resolve, reject) => {
   r.readAsDataURL(file);
 });
 
-async function sendAttachment() {
-  const { file } = pending;
+/** Send each staged file as its own message, one at a time.
+ *
+ *  Deliberately a loop over the single-file endpoint rather than a bulk route:
+ *  every file then passes the outbound gate on its own, so the hourly cap and
+ *  the duplicate-file guard still mean what they say, and the server keeps no
+ *  path that sends many things at once. Whatever fails stays attached.
+ */
+async function sendAttachments() {
+  const files = pending.slice();
+  const caption = input.value.trim();
+  const quoted = replyTo?.id || null;
   $('send').disabled = true;
-  $('send').textContent = 'Sending…';
-  try {
-    await api(`/api/chats/${encodeURIComponent(open)}/media`, {
-      filename: file.name, caption: input.value.trim(), data: await readAsBase64(file),
-      replyTo: replyTo?.id || null,
-    });
-    clearAttachment();
+  const done = [];
+  const failed = [];
+
+  for (const [i, file] of files.entries()) {
+    $('send').textContent = files.length > 1 ? `Sending ${i + 1} of ${files.length}…` : 'Sending…';
+    try {
+      await api(`/api/chats/${encodeURIComponent(open)}/media`, {
+        filename: file.name,
+        // The caption and the reply belong to the batch, not to every file —
+        // repeating them would read as spam at the other end.
+        caption: i === 0 ? caption : '',
+        data: await readAsBase64(file),
+        replyTo: i === 0 ? quoted : null,
+      });
+      done.push(file);
+    } catch (err) {
+      failed.push(`${file.name} — ${err.message}`);
+    }
+  }
+
+  // Keep only what did not go, so a retry does not re-send anything.
+  done.forEach((f) => { if (f.previewUrl) URL.revokeObjectURL(f.previewUrl); });
+  pending = pending.filter((f) => !done.includes(f));
+  $('file').value = '';
+  renderAttachments();
+
+  if (done.length) {
     cancelReply();
     input.value = ''; input.style.height = 'auto';
-    await refreshOpen(); loadChats();
-  } catch (err) {
-    toast(err.message); // the file stays attached so nothing has to be picked again
-  } finally {
-    $('send').innerHTML = SEND_LABEL;
-    updateSendState();
+    if (files.length > 1) toast(`Sent ${done.length} of ${files.length}.`, failed.length ? '' : 'ok');
   }
+  if (failed.length) toast(failed.length === 1 ? failed[0] : `${failed.length} could not be sent — ${failed[0]}`);
+
+  $('send').innerHTML = SEND_LABEL;
+  updateSendState();
+  await refreshOpen(); loadChats();
 }
 
 // --- live updates -------------------------------------------------------
