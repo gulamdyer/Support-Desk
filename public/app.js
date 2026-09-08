@@ -28,6 +28,7 @@ function sessionExpired(message = 'Your session expired. Please sign in again.')
   $('profileBtn').setAttribute('aria-expanded', 'false');
   $('app').hidden = true;
   $('loginPage').hidden = false;
+  setPwVisible(false);
   $('loginErr').textContent = message;
 }
 
@@ -1616,6 +1617,23 @@ $('waLinkBtn').onclick = async () => {
 };
 
 // --- boot ---------------------------------------------------------------
+// Reveal what was typed. Reset to hidden whenever the login page reappears, so
+// one person's password is never left on screen for the next.
+function setPwVisible(show) {
+  const input = $('login').elements.password;
+  input.type = show ? 'text' : 'password';
+  $('pwEye').hidden = show;
+  $('pwEyeOff').hidden = !show;
+  const label = show ? 'Hide password' : 'Show password';
+  $('pwToggle').setAttribute('aria-pressed', String(show));
+  $('pwToggle').setAttribute('aria-label', label);
+  $('pwToggle').title = label;
+}
+$('pwToggle').onclick = () => {
+  setPwVisible($('login').elements.password.type === 'password');
+  $('login').elements.password.focus();
+};
+
 $('login').onsubmit = async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
@@ -1642,7 +1660,8 @@ function start() {
   setInterval(refreshOpen, 30000); // keeps the window countdown honest
 }
 
-api('/api/me').then((d) => { me = d.user; start(); }).catch(() => { $('loginPage').hidden = false; });
+api('/api/me').then((d) => { me = d.user; start(); })
+  .catch(() => { $('loginPage').hidden = false; setPwVisible(false); });
 
 // --- install to the home screen ------------------------------------------
 // Chrome and Edge hand over a real prompt. Safari has no such API on any
