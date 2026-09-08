@@ -352,13 +352,11 @@ const clearPicked = () => { picked = new Set(); shareReady = null; renderPicked(
 // Firefox has no file sharing, so the button stays hidden there rather than
 // promising something that will fail.
 const SHARE_MAX = 10;
-const canShareFiles = () => {
-  try {
-    const probe = new File([new Blob([''])], 'probe.pdf', { type: 'application/pdf' });
-    return !!navigator.canShare?.({ files: [probe] });
-  } catch { return false; }
-};
-const SHARE_SUPPORTED = canShareFiles();
+// Gate on the API existing, not on a synthetic probe. Probing with a made-up
+// zero-byte file returned false on WebKit — which rejects empty files — so the
+// button was hidden on iPhone even though sharing works there. Whether these
+// particular files can be shared is asked at click time, with the real files.
+const SHARE_SUPPORTED = typeof navigator.share === 'function';
 
 async function prepareShare(msgs) {
   const key = msgs.map((m) => m.id).join('|');
@@ -399,7 +397,19 @@ $('pickShare').onclick = async () => {
       // The gesture expired while the files were being read; they are held now.
       return toast('Ready — tap Share again to choose an app.');
     }
-    if (err?.code === 'nofiles') return toast('This browser cannot share files. Use Download instead.');
+    if (err?.code === 'nofiles') {
+      // Sharing is unavailable for these files — save them instead, which is
+      // what the agent was going to do with them anyway.
+      const { files } = shareReady || { files: [] };
+      files.forEach((f) => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(f);
+        a.download = f.name;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+      });
+      return toast(files.length ? `Sharing unavailable — downloaded ${files.length} instead.` : 'Nothing to share.');
+    }
     toast(err.message || 'Could not share that.');
   } finally {
     btn.disabled = false;
@@ -1676,6 +1686,10 @@ const isSafari = /^((?!chrome|chromium|crios|android|fxios|edg).)*safari/i.test(
 // working feature stays hidden. Firefox on desktop has no install at all, so
 // there it is correctly left out rather than given instructions that go nowhere.
 const isFirefoxAndroid = /Android/i.test(navigator.userAgent) && /Firefox/i.test(navigator.userAgent);
+// On iOS a home-screen web app is installed by Safari. Other iOS browsers are
+// the same WebKit engine but do not reliably offer that action, so pointing
+// someone at a Share sheet that has no such item is why this "did not work".
+const isIOSNonSafari = isIOS && /CriOS|FxiOS|EdgiOS|OPiOS|GSA/i.test(navigator.userAgent);
 
 function refreshInstallOption() {
   const canPrompt = !!window.__installPrompt;
@@ -1706,11 +1720,15 @@ $('installApp').onclick = async () => {
   }
   // Do not name the browser: the same steps are right in Safari, Chrome and
   // Edge on iOS, and naming one of them reads as "you are in the wrong app".
-  $('installSteps').innerHTML = isIOS
-    ? 'Tap <strong>Share</strong> in the browser toolbar, then choose <strong>Add to Home Screen</strong>.'
-    : isFirefoxAndroid
-      ? 'Open the browser menu (<strong>⋮</strong>) and choose <strong>Install</strong>.'
-      : 'In Safari, open the <strong>File</strong> menu and choose <strong>Add to Dock</strong>.';
+  $('installSteps').innerHTML = isIOSNonSafari
+    ? `On iPhone and iPad only <strong>Safari</strong> can add a web app to the home screen.
+       Open <strong>${esc(location.host)}</strong> in Safari, tap <strong>Share</strong>,
+       then choose <strong>Add to Home Screen</strong>.`
+    : isIOS
+      ? 'Tap <strong>Share</strong> in the toolbar, then choose <strong>Add to Home Screen</strong>.'
+      : isFirefoxAndroid
+        ? 'Open the browser menu (<strong>⋮</strong>) and choose <strong>Install</strong>.'
+        : 'In Safari, open the <strong>File</strong> menu and choose <strong>Add to Dock</strong>.';
   $('installModal').hidden = false;
 };
 const closeInstall = () => { $('installModal').hidden = true; };
