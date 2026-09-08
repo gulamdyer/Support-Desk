@@ -318,11 +318,16 @@ $('messages').addEventListener('click', (e) => {
 
 // --- selecting several messages to forward -------------------------------
 let picked = new Set();
+// share() needs the user gesture that started it, and fetching the files can
+// outlive that. So the files are kept after the first tap: if the browser
+// refuses because the gesture expired, the second tap shares instantly.
+let shareReady = null;   // { key, files, text }
 
 function renderPicked() {
   const on = picked.size > 0;
   $('messages').classList.toggle('picking', on);
   $('pickBar').hidden = !on;
+  $('pickShare').hidden = !SHARE_SUPPORTED;
   $('pickCount').textContent = on ? `${picked.size} selected` : '';
   document.querySelectorAll('#messages .msg').forEach((el) => {
     const id = el.querySelector('[data-menu]')?.dataset.menu;
@@ -332,10 +337,72 @@ function renderPicked() {
 
 function togglePick(id) {
   if (picked.has(id)) picked.delete(id); else picked.add(id);
+  shareReady = null;   // the selection changed, so anything prepared is stale
   renderPicked();
 }
 
-const clearPicked = () => { picked = new Set(); renderPicked(); };
+const clearPicked = () => { picked = new Set(); shareReady = null; renderPicked(); };
+
+// --- share the selection out of the app -----------------------------------
+// The Web Share API hands files to whatever the operating system offers —
+// WhatsApp, Mail, Slack, AirDrop. It is only offered where it actually works;
+// Firefox has no file sharing, so the button stays hidden there rather than
+// promising something that will fail.
+const SHARE_MAX = 10;
+const canShareFiles = () => {
+  try {
+    const probe = new File([new Blob([''])], 'probe.pdf', { type: 'application/pdf' });
+    return !!navigator.canShare?.({ files: [probe] });
+  } catch { return false; }
+};
+const SHARE_SUPPORTED = canShareFiles();
+
+async function prepareShare(msgs) {
+  const key = msgs.map((m) => m.id).join('|');
+  if (shareReady?.key === key) return shareReady;
+  const files = [];
+  for (const m of msgs.filter((x) => x.media_path)) {
+    const url = `/media/${encodeURIComponent(m.media_path.split('/').pop())}?download=1`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Could not read ${fileLabel(m)}.`);
+    const blob = await res.blob();
+    files.push(new File([blob], fileLabel(m), { type: blob.type || mimeOf(fileLabel(m)) }));
+  }
+  const text = msgs.filter((m) => !m.media_path).map((m) => realBody(m.body)).filter(Boolean).join('\n\n');
+  shareReady = { key, files, text };
+  return shareReady;
+}
+
+$('pickShare').onclick = async () => {
+  const msgs = [...picked].map(msgById).filter(Boolean);
+  if (!msgs.length) return;
+  if (msgs.filter((m) => m.media_path).length > SHARE_MAX) {
+    return toast(`Share up to ${SHARE_MAX} files at a time.`);
+  }
+  const btn = $('pickShare');
+  const label = btn.textContent;
+  btn.disabled = true;
+  try {
+    btn.textContent = 'Preparing…';
+    const { files, text } = await prepareShare(msgs);
+    const payload = files.length ? (text ? { files, text } : { files }) : { text };
+    if (!text && !files.length) return toast('Nothing to share in that selection.');
+    if (!navigator.canShare?.(payload)) throw Object.assign(new Error('unsupported'), { code: 'nofiles' });
+    await navigator.share(payload);
+    clearPicked();
+  } catch (err) {
+    if (err?.name === 'AbortError') return;                 // the sheet was dismissed
+    if (err?.name === 'NotAllowedError') {
+      // The gesture expired while the files were being read; they are held now.
+      return toast('Ready — tap Share again to choose an app.');
+    }
+    if (err?.code === 'nofiles') return toast('This browser cannot share files. Use Download instead.');
+    toast(err.message || 'Could not share that.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+};
 $('pickCancel').onclick = clearPicked;
 $('pickForward').onclick = () => { if (picked.size) openForward([...picked]); };
 
@@ -1375,6 +1442,41 @@ document.querySelectorAll('.filters .chip').forEach((c) => {
   };
 });
 $('applyRange').onclick = runReport;
+
+// --- admin: storage -------------------------------------------------------
+// Nothing deletes attachments, so this is the number that decides when the
+// volume needs attention. Shown as a share of the disk the data volume sits
+// on, with the two things actually consuming it broken out.
+const gb = (n) => `${(n / 1073741824).toFixed(n < 1073741824 ? 2 : 1)} GB`;
+const mb = (n) => (n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(0)} MB`);
+
+$('storage').onclick = async () => {
+  closeMenu();
+  $('storageModal').hidden = false;
+  $('storageBody').innerHTML = '<p class="hint">Reading…</p>';
+  try {
+    const d = await api('/api/admin/storage');
+    const pct = d.total ? Math.round((d.used / d.total) * 100) : 0;
+    const level = pct >= 90 ? 'crit' : pct >= 75 ? 'warn' : '';
+    $('storageBody').innerHTML = `
+      <div class="store-head">
+        <span class="store-pct">${pct}%</span>
+        <span class="hint">${gb(d.used)} of ${gb(d.total)} used · ${gb(d.free)} free</span>
+      </div>
+      <div class="store-bar ${level}"><i style="width:${Math.min(100, pct)}%"></i></div>
+      <div class="store-rows">
+        <div class="store-row"><span>Attachments</span><span>${mb(d.mediaBytes)} · ${d.mediaFiles.toLocaleString()} files</span></div>
+        <div class="store-row"><span>Conversation database</span><span>${mb(d.dbBytes)}</span></div>
+        <div class="store-row"><span>Everything else on the disk</span><span>${gb(Math.max(0, d.used - d.mediaBytes - d.dbBytes))}</span></div>
+      </div>
+      ${level ? `<p class="hint warn-hint" style="margin-top:14px">${pct >= 90
+        ? 'Almost full. Attachments are never deleted — free space or add a retention rule now.'
+        : 'Filling up. Attachments are never deleted, so this only grows.'}</p>` : ''}`;
+  } catch (err) { $('storageBody').innerHTML = `<p class="err">${esc(err.message)}</p>`; }
+};
+const closeStorage = () => { $('storageModal').hidden = true; };
+$('storageClose').onclick = closeStorage;
+$('storageModal').onclick = (e) => { if (e.target.id === 'storageModal') closeStorage(); };
 
 // --- admin: WhatsApp device linking --------------------------------------
 let waTimer = null;

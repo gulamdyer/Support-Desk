@@ -1,7 +1,7 @@
 /** Shared WhatsApp inbox — HTTP server, ingest loop and SSE fan-out. */
 import express from 'express';
 import path from 'node:path';
-import { existsSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
+import { existsSync, writeFileSync, mkdirSync, unlinkSync, statSync, statfsSync, readdirSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import S, { recordInbound, now, db, contactChanged } from './db.js';
 import { login, logout, requireAuth, requireAdmin, hashPassword, seedAdmin, publicUser, LoginError } from './auth.js';
@@ -421,6 +421,39 @@ app.post('/api/admin/whatsapp/link', requireAdmin, wrap(async (req, res) => {
 
 app.get('/api/admin/whatsapp/history', requireAdmin, (req, res) =>
   res.json({ events: S.waEvents.all() }));
+
+// --- storage --------------------------------------------------------------
+// Nothing prunes attachments, so the volume fills quietly. Walking the media
+// directory is cheap now and gets less so, hence the short cache: this is a
+// panel someone opens, not something on a hot path.
+let storageCache = { at: 0, data: null };
+function storageUsage() {
+  if (Date.now() - storageCache.at < 60_000) return storageCache.data;
+
+  const fsStat = statfsSync(path.resolve('data'));
+  const total = fsStat.blocks * fsStat.bsize;
+  const free = fsStat.bavail * fsStat.bsize;
+
+  let mediaBytes = 0;
+  let mediaFiles = 0;
+  try {
+    for (const f of readdirSync(MEDIA_DIR)) {
+      try { mediaBytes += statSync(path.join(MEDIA_DIR, f)).size; mediaFiles += 1; } catch {}
+    }
+  } catch { /* no media yet */ }
+
+  const sizeOf = (p) => { try { return statSync(p).size; } catch { return 0; } };
+  const dbBytes = ['inbox.db', 'inbox.db-wal', 'inbox.db-shm']
+    .reduce((n, f) => n + sizeOf(path.resolve('data', f)), 0);
+
+  storageCache = {
+    at: Date.now(),
+    data: { total, free, used: total - free, mediaBytes, mediaFiles, dbBytes },
+  };
+  return storageCache.data;
+}
+
+app.get('/api/admin/storage', requireAdmin, (req, res) => res.json(storageUsage()));
 
 // Importing the address book is a deliberate choice, made once per linked
 // phone. Neither route touches pairing.
