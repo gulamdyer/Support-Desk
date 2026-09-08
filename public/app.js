@@ -121,8 +121,26 @@ const MIME = {
 };
 const mimeOf = (name) => MIME[String(name).toLowerCase().split('.').pop()] || 'application/octet-stream';
 
-const fileLabel = (m) => (m.media_path || '').split('/').pop().replace(/^[0-9a-f]{8}-/, '')
-  || m.media_type || 'file';
+// Stored names carry an id so two files called invoice.pdf cannot collide on
+// disk: outbound is "<8hex>-name", inbound is "doc_<12hex>_name" (or
+// "img_<12hex>.jpg" for a photo, which never had a name to begin with). None
+// of that is the agent's business — show what the sender actually called it.
+const STORED_ID = /^(?:[0-9a-f]{8}-|(?:img|vid|aud|doc|ptt)_[0-9a-f]{8,16}_?)/i;
+const KIND_NAME = { image: 'Photo', video: 'Video', audio: 'Voice note', document: 'Document' };
+
+const fileLabel = (m) => {
+  const stored = (m.media_path || '').split('/').pop();
+  const name = stored.replace(STORED_ID, '');
+  // A photo or voice note arrives with no filename, so stripping the id leaves
+  // nothing but an extension. Give those something readable to show and to
+  // save as, rather than ".jpg".
+  if (!name || name.startsWith('.')) {
+    const kind = KIND_NAME[m.media_type] || 'Attachment';
+    const ext = stored.includes('.') ? extOf(stored) : '';
+    return ext ? `${kind}.${ext}` : kind;
+  }
+  return name;
+};
 const senderOf = (m) => m.sender_display || maskNumber(m.sender_phone || m.sender_id);
 const initials = (name) => (isMasked(name)
   ? onlyDigits(name).slice(-2)
