@@ -113,6 +113,9 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&l
 // --- chat list ----------------------------------------------------------
 // All / Personal / Groups / Unassigned, plus an optional activity-date window.
 function matchesFilters(c) {
+  // Unread means nobody on the team has opened it yet — the same count the
+  // badge shows, so the filter and the badge can never disagree.
+  if (category === 'unread' && !c.unread) return false;
   if (category === 'personal' && c.is_group) return false;
   if (category === 'group' && !c.is_group) return false;
   if (category === 'unassigned' && c.assigned_to) return false;
@@ -134,8 +137,11 @@ function renderChats() {
         <div class="p">${c.preview_out ? '↩ ' : ''}${esc(previewText(c.preview).slice(0, 60))}</div>
         ${c.unread ? `<div class="badge">${c.unread}</div>` : '<div></div>'}
         ${c.assignee_name ? `<div class="owner">${esc(c.assignee_name)}${c.assigned_to === me.id ? ' (you)' : ''}</div>` : ''}
-      </div>`).join('') || `<div class="list-empty">${filter || category !== 'all' || dateFrom !== null
-      ? 'No conversations match these filters.' : 'No conversations yet.'}</div>`;
+      </div>`).join('') || `<div class="list-empty">${
+    // An empty Unread list is the good outcome, not a failed search.
+    category === 'unread' && !filter && dateFrom === null ? 'Nothing unread — the team is caught up.'
+      : filter || category !== 'all' || dateFrom !== null ? 'No conversations match these filters.'
+      : 'No conversations yet.'}</div>`;
 }
 
 $('chats').onclick = (e) => {

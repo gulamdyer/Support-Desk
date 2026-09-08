@@ -260,6 +260,11 @@ app.get('/api/chats/:id/search', (req, res) => {
 app.post('/api/chats/:id/read', wrap(async (req, res) => {
   const chat = S.chat.get(req.params.id);
   if (!chat) return res.status(404).json({ error: 'Chat not found' });
+  // The owner account exists to troubleshoot, not to work the queue. Looking at
+  // a conversation with it must leave no trace: the team's unread count stands,
+  // and — the part that reaches outside — no blue tick appears on the
+  // customer's phone for a message no agent has actually read.
+  if (S.userById.get(req.user.id)?.is_owner) return res.json({ ok: true, observed: true });
   const keys = S.unreadKeys.all(chat.id, chat.last_read_ts);
   S.markRead.run(now(), chat.id);
   if (keys.length) {
