@@ -14,6 +14,9 @@ export const LIMITS = {
   chatHourly:    () => env('CHAT_HOURLY_CAP', 15),
   globalHourly:  () => env('GLOBAL_HOURLY_CAP', 120),
   duplicateChats:() => env('DUPLICATE_CHAT_LIMIT', 3),
+  // Below this length a message is treated as an acknowledgement, not content,
+  // and the broadcast guard does not apply to it.
+  duplicateMinLen:() => env('DUPLICATE_MIN_LEN', 25),
 };
 
 /** Why this chat can or cannot be replied to right now.
@@ -55,8 +58,15 @@ export function checkOutbound(chatId, body, at = now(), hasMedia = false, mediaP
   // Identical text fanned out across chats is the signature of a broadcast,
   // which is the single fastest way to lose the number. An empty caption is not
   // a duplicate — several photos sent without captions must not trip this.
-  if (text && S.duplicateChats.get(text, at - 86400).c >= LIMITS.duplicateChats()) {
-    throw new GateError(`This exact text has already gone to ${LIMITS.duplicateChats()} other chats today. Personalise it — identical bulk messages get the number banned.`);
+  //
+  // Short replies are exempt. "Ok" reaching a fourth conversation is a support
+  // team working, not a broadcast, and refusing it was a real fault: in
+  // production "Ok", "OK", "K" and "." had all hit the limit while 89% of
+  // outbound text was under 40 characters. A broadcast worth stopping is
+  // content — a sentence or a paragraph — so only those are counted.
+  if (text.length > LIMITS.duplicateMinLen()
+      && S.duplicateChats.get(text, at - 86400).c >= LIMITS.duplicateChats()) {
+    throw new GateError(`This exact message has already gone to ${LIMITS.duplicateChats()} other chats today. Change the wording — identical bulk messages get the number banned.`);
   }
   // Same rule for attachments: an image forwarded to twenty chats is a
   // broadcast regardless of whether anyone typed a caption.

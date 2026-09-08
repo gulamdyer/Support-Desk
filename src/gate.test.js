@@ -44,17 +44,28 @@ rejects(() => checkOutbound('live@s.whatsapp.net', '   '), 'empty');
 for (let i = 0; i < 15; i++) outbound('live@s.whatsapp.net', `reply ${i}`);
 rejects(() => checkOutbound('live@s.whatsapp.net', 'one more'), 'Hourly limit');
 
-// 5. Broadcast guard: identical text across chats is blocked.
+// 5. Broadcast guard: identical CONTENT across chats is blocked.
+const BLAST = 'Big sale this weekend — 40% off everything, this weekend only!';
 for (const n of [1, 2, 3]) {
   const c = `blast${n}@s.whatsapp.net`;
   inbound(c, T - 300);
-  outbound(c, 'Big sale this weekend!');
+  outbound(c, BLAST);
 }
 inbound('blast4@s.whatsapp.net', T - 300);
-rejects(() => checkOutbound('blast4@s.whatsapp.net', 'Big sale this weekend!'), 'Personalise');
+rejects(() => checkOutbound('blast4@s.whatsapp.net', BLAST), 'Change the wording');
 // ...but a personalised message to the same chat still goes through.
 assert.equal(checkOutbound('blast4@s.whatsapp.net', 'Hi Sara, your order ships today.'),
   'Hi Sara, your order ships today.');
+
+// 5b. A short reply is an acknowledgement, not a broadcast. Regression cover
+// for 2026-09-08: "Ok" reached three chats and every agent after that was
+// refused, which is a support team being stopped from doing its job.
+for (const n of [1, 2, 3]) outbound(`blast${n}@s.whatsapp.net`, 'Ok');
+assert.equal(checkOutbound('blast4@s.whatsapp.net', 'Ok'), 'Ok');
+// The exemption is length-based, so a long stock phrase is still caught.
+const STOCK = 'Thank you for contacting us, an agent will respond to you shortly.';
+for (const n of [1, 2, 3]) outbound(`blast${n}@s.whatsapp.net`, STOCK);
+rejects(() => checkOutbound('blast4@s.whatsapp.net', STOCK), 'Change the wording');
 
 // 6. Inbound is deduped — a mirrored echo must not double up.
 const dup = { messageId: 'dup-1', chatId: 'live@s.whatsapp.net', senderId: 'x',
@@ -62,4 +73,4 @@ const dup = { messageId: 'dup-1', chatId: 'live@s.whatsapp.net', senderId: 'x',
 assert.equal(recordInbound(dup), true);
 assert.equal(recordInbound(dup), false);
 
-console.log('✅ gate: 6/6 — reply-only window, rate caps, broadcast guard, dedupe');
+console.log('✅ gate: 7/7 — reply-only window, rate caps, broadcast guard, short replies, dedupe');
