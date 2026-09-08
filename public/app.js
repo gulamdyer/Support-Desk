@@ -102,10 +102,7 @@ function docCard(m, url) {
     draggable="true" data-dl="${url}?download=1" data-dlname="${esc(name)}"
     title="${pdf ? 'Open' : 'Download'} ${esc(name)}">
     <span class="doc-icon ${pdf ? 'pdf' : ''}">${esc(ext.slice(0, 4).toUpperCase() || 'FILE')}</span>
-    <span class="doc-text">
-      <span class="doc-name">${esc(name)}</span>
-      <span class="doc-kind">${pdf ? 'PDF · tap to read' : 'tap to download'}</span>
-    </span>
+    <span class="doc-text"><span class="doc-name">${esc(name)}</span></span>
   </button>`;
 }
 
@@ -152,6 +149,18 @@ const avatar = (id, name) => `<span class="avatar" style="background:hsl(${hue(i
 const setAvatar = (el, id, name) => { el.textContent = initials(name); el.style.background = `hsl(${hue(String(id))} 42% 42%)`; };
 const PLACEHOLDER = /^\[(image|audio|video|document|sticker|media) received\]$/i;
 const realBody = (b) => (PLACEHOLDER.test(b || '') ? '' : b);
+
+/** True when a document's caption is just its filename repeated. WhatsApp
+ *  sends the name as the caption, so printing the body as well showed it
+ *  twice. A caption the sender actually typed is still shown. */
+const captionRepeatsName = (m) => {
+  if (!m.media_path) return false;
+  const body = realBody(m.body).trim().toLowerCase();
+  if (!body) return false;
+  const name = fileLabel(m).trim().toLowerCase();
+  return body === name || body === name.replace(/\.[^.]+$/, '');
+};
+
 const esc = (s) => String(s).replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
 
 // --- chat list ----------------------------------------------------------
@@ -241,7 +250,7 @@ function renderMessages(messages, isGroup) {
       <button class="msg-caret" data-menu="${esc(m.id)}" title="Message actions" aria-label="Message actions" aria-haspopup="menu"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
       ${!m.from_me && isGroup && m.sender_id ? `<div class="from">${esc(senderOf(m))}</div>` : ''}
       ${m.from_me && m.agent_name ? `<div class="from">${esc(m.agent_name)}</div>` : ''}
-      ${quoteOf(m)}${media}${realBody(m.body) ? `<span class="body">${highlight(realBody(m.body))}</span>` : ''}
+      ${quoteOf(m)}${media}${realBody(m.body) && !captionRepeatsName(m) ? `<span class="body">${highlight(realBody(m.body))}</span>` : ''}
       <div class="meta">${clock(m.ts)} ${state}</div>
     </div>`;
   }).join('');

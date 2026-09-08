@@ -263,9 +263,8 @@ button { font: inherit; cursor: pointer; }
   place-items: center; background: var(--panel); border: 1px solid var(--line);
   font: 600 9px/1 var(--mono, ui-monospace, monospace); letter-spacing: .04em; color: var(--muted); }
 .doc-icon.pdf { background: #b3241c; border-color: #b3241c; color: #fff; }
-.doc-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.doc-text { min-width: 0; display: flex; }
 .doc-name { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.doc-kind { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
 
 .doc-sheet { width: min(940px, 94vw); height: min(88vh, 940px); display: flex; flex-direction: column; }
 .doc-body { flex: 1; min-height: 0; display: flex; }
