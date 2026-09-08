@@ -1669,6 +1669,11 @@ api('/api/me').then((d) => { me = d.user; start(); })
 const installed = () =>
   window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isSafari = /^((?!chrome|chromium|crios|android|fxios|edg).)*safari/i.test(navigator.userAgent);
+// Firefox on Android installs from its own menu and never fires
+// beforeinstallprompt, so without this it is the one mobile browser where a
+// working feature stays hidden. Firefox on desktop has no install at all, so
+// there it is correctly left out rather than given instructions that go nowhere.
+const isFirefoxAndroid = /Android/i.test(navigator.userAgent) && /Firefox/i.test(navigator.userAgent);
 
 function refreshInstallOption() {
   const canPrompt = !!window.__installPrompt;
@@ -1676,7 +1681,7 @@ function refreshInstallOption() {
   // different shell — and all of them add to the home screen through the same
   // Share sheet. Keying this on "is Safari" hid the option in Chrome for
   // iPhone, where it works perfectly well.
-  $('installApp').hidden = installed() || !(canPrompt || isIOS || isSafari);
+  $('installApp').hidden = installed() || !(canPrompt || isIOS || isSafari || isFirefoxAndroid);
 }
 window.addEventListener('app-installable', refreshInstallOption);
 window.addEventListener('appinstalled', () => {
@@ -1701,7 +1706,9 @@ $('installApp').onclick = async () => {
   // Edge on iOS, and naming one of them reads as "you are in the wrong app".
   $('installSteps').innerHTML = isIOS
     ? 'Tap <strong>Share</strong> in the browser toolbar, then choose <strong>Add to Home Screen</strong>.'
-    : 'In Safari, open the <strong>File</strong> menu and choose <strong>Add to Dock</strong>.';
+    : isFirefoxAndroid
+      ? 'Open the browser menu (<strong>⋮</strong>) and choose <strong>Install</strong>.'
+      : 'In Safari, open the <strong>File</strong> menu and choose <strong>Add to Dock</strong>.';
   $('installModal').hidden = false;
 };
 const closeInstall = () => { $('installModal').hidden = true; };
