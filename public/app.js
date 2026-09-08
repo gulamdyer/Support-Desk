@@ -292,12 +292,14 @@ function openDoc(url, name) {
   $('docOpen').href = url;
   $('docSave').href = `${url}?download=1`;
   $('docSave').setAttribute('download', name);
-  // iOS and iPadOS refuse to render a PDF in a frame and leave it blank —
-  // a platform limitation, not something a page can work around. Everywhere
-  // else, show the frame and trust the browser.
-  $('docFrame').hidden = isIOS;
+  // Always try to render. WebKit's PDF support in a frame varies by iOS
+  // version — sometimes the whole document, sometimes the first page — and
+  // refusing to try on that assumption showed nothing on devices that could
+  // have shown something. On iOS the escape hatch sits under the frame rather
+  // than replacing it, so a blank result still has a way out.
+  $('docFrame').hidden = false;
+  $('docFrame').src = url;
   $('docFallback').hidden = !isIOS;
-  $('docFrame').src = isIOS ? 'about:blank' : url;
   $('docModal').hidden = false;
 }
 
