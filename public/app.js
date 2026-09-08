@@ -49,6 +49,9 @@ const timeOf = (ts) => {
 };
 // Bubbles show a clock only; the day separator above them carries the date.
 const clock = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+// History entries are read days apart, so they carry the date as well as the time.
+const when = (ts) => new Date(ts * 1000)
+  .toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 const dayLabel = (ts) => {
   const d = new Date(ts * 1000), days = Math.round((Date.now() / 1000 - ts) / 86400);
   if (d.toDateString() === new Date().toDateString()) return 'Today';
@@ -1336,7 +1339,40 @@ $('waLink').onclick = () => {
   loadWa();
   waPoll(3000); // the QR rotates every ~20s
 };
-const closeWa = () => { $('waModal').hidden = true; clearInterval(waTimer); waTimer = null; waWaiting = false; waWasLinked = null; };
+// --- connection history ---------------------------------------------------
+const WA_EVENT = {
+  linked:           { cls: 'on',  text: (d) => `Linked to +${d}` },
+  link_requested:   { cls: '',    text: () => 'Link requested — QR shown' },
+  unlinked:         { cls: 'off', text: (d) => (d ? `Unlinked +${d}` : 'Phone unlinked') },
+  contacts_synced:  { cls: 'on',  text: () => 'Contacts imported' },
+  contacts_skipped: { cls: '',    text: () => 'Contacts not imported' },
+};
+
+async function loadWaLog() {
+  try {
+    const { events } = await api('/api/admin/whatsapp/history');
+    $('waLog').innerHTML = events.length ? events.map((e) => {
+      const spec = WA_EVENT[e.kind] || { cls: '', text: () => e.kind };
+      return `<div class="wa-ev ${spec.cls}"><i></i><div>
+        <div>${esc(spec.text(e.detail))}</div>
+        <div class="t">${esc(when(e.ts))}${e.by_name ? ` · ${esc(e.by_name)}` : ''}</div>
+      </div></div>`;
+    }).join('') : '<div class="none">Nothing recorded yet.</div>';
+  } catch (err) { $('waLog').innerHTML = `<div class="none">${esc(err.message)}</div>`; }
+}
+
+$('waHistory').onclick = async () => {
+  const show = $('waLog').hidden;
+  $('waLog').hidden = !show;
+  $('waHistory').setAttribute('aria-expanded', String(show));
+  if (show) await loadWaLog();
+};
+
+const closeWa = () => {
+  $('waModal').hidden = true; clearInterval(waTimer); waTimer = null;
+  waWaiting = false; waWasLinked = null;
+  $('waLog').hidden = true; $('waHistory').setAttribute('aria-expanded', 'false');
+};
 
 // Either answer is the end of the job: the phone is linked and the contact
 // decision is made, so the panel closes itself rather than leaving the admin
@@ -1369,7 +1405,12 @@ $('waUnlinkNo').onclick = () => { $('waConfirm').hidden = true; };
 $('waUnlinkYes').onclick = async () => {
   $('waErr').textContent = '';
   $('waConfirm').hidden = true;
-  try { await api('/api/admin/whatsapp/unlink', {}); toast('Phone unlinked.', 'ok'); await loadWa(); }
+  try {
+    await api('/api/admin/whatsapp/unlink', {});
+    toast('Phone unlinked.', 'ok');
+    await loadWa();
+    if (!$('waLog').hidden) await loadWaLog();
+  }
   catch (err) { $('waErr').textContent = err.message; }
 };
 $('waLinkBtn').onclick = async () => {

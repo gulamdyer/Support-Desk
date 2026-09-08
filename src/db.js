@@ -107,6 +107,19 @@ CREATE TABLE IF NOT EXISTS contact_keys (
 CREATE INDEX IF NOT EXISTS idx_ckeys_contact ON contact_keys(contact_id);
 CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone) WHERE phone IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_contacts_lid   ON contacts(lid)   WHERE lid IS NOT NULL;
+
+-- Who linked or unlinked the phone, and whether they imported the address
+-- book. Handing this inbox to somebody else means handing over the question
+-- "when did this number change, and who agreed to the contacts being pulled?"
+-- — which nothing recorded until now.
+CREATE TABLE IF NOT EXISTS wa_events (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts      INTEGER NOT NULL,
+  kind    TEXT NOT NULL,   -- link_requested | linked | unlinked | contacts_synced | contacts_skipped
+  detail  TEXT,            -- the number, or how many contacts arrived
+  user_id INTEGER REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_wa_events_ts ON wa_events(ts DESC);
 `);
 
 // Migration for databases created before roles existed. CREATE TABLE IF NOT
@@ -389,6 +402,14 @@ const S = {
   agentAccounts: db.prepare(`SELECT id, username, name FROM users
     WHERE active = 1 AND is_owner = 0 AND is_admin = 0`),
   setOwner: db.prepare(`UPDATE users SET is_owner = ? WHERE id = ?`),
+
+  // --- WhatsApp connection history ---
+  addWaEvent: db.prepare(`INSERT INTO wa_events (ts, kind, detail, user_id) VALUES (?,?,?,?)`),
+  waEvents: db.prepare(`SELECT e.id, e.ts, e.kind, e.detail, u.name AS by_name
+    FROM wa_events e LEFT JOIN users u ON u.id = e.user_id
+    ORDER BY e.ts DESC, e.id DESC LIMIT 100`),
+  lastWaEvent: db.prepare(`SELECT kind, detail FROM wa_events
+    WHERE kind IN ('linked','unlinked') ORDER BY ts DESC, id DESC LIMIT 1`),
   setActive: db.prepare(`UPDATE users SET active = ? WHERE id = ?`),
   setPassword: db.prepare(`UPDATE users SET pw_hash = ? WHERE id = ?`),
   setAdmin: db.prepare(`UPDATE users SET is_admin = ? WHERE id = ?`),

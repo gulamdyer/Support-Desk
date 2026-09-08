@@ -117,7 +117,20 @@ async function watchBridge() {
   for (;;) {
     let next = 'unreachable';
     try { next = (await bridge('/health')).status; } catch {}
-    if (next !== bridgeStatus) { bridgeStatus = next; broadcast({ type: 'status', status: next }); }
+    if (next !== bridgeStatus) {
+      bridgeStatus = next;
+      broadcast({ type: 'status', status: next });
+      // The link itself completes on the bridge, so this poll is where the
+      // inbox first learns of it. Only record a genuinely new number: a
+      // redeploy reconnects the same phone and must not fill the history.
+      if (next === 'connected') {
+        try {
+          const { number } = await bridge('/link/status');
+          const last = S.lastWaEvent.get();
+          if (number && !(last?.kind === 'linked' && last.detail === number)) logWa('linked', number);
+        } catch { /* the next poll will catch it */ }
+      }
+    }
     S.releaseStale.run(now() - CLAIM_TTL);
     await new Promise((r) => setTimeout(r, 5000));
   }
@@ -387,24 +400,40 @@ app.get('/api/admin/whatsapp', requireAdmin, wrap(async (req, res) => {
   }
 }));
 
+/** Record something that happened to the connection, for the history panel. */
+const logWa = (kind, detail, userId = null) => {
+  try { S.addWaEvent.run(now(), kind, detail ?? null, userId); } catch { /* history is not worth failing a request over */ }
+};
+
 app.post('/api/admin/whatsapp/unlink', requireAdmin, wrap(async (req, res) => {
+  const before = await bridge('/link/status').catch(() => ({}));
   const out = await bridge('/link/unlink', {});
+  logWa('unlinked', before.number || null, req.user.id);
   broadcast({ type: 'status', status: 'logged_out' });
   res.json(out);
 }));
 
 app.post('/api/admin/whatsapp/link', requireAdmin, wrap(async (req, res) => {
-  res.json(await bridge('/link/start', {}));
+  const out = await bridge('/link/start', {});
+  logWa('link_requested', null, req.user.id);
+  res.json(out);
 }));
+
+app.get('/api/admin/whatsapp/history', requireAdmin, (req, res) =>
+  res.json({ events: S.waEvents.all() }));
 
 // Importing the address book is a deliberate choice, made once per linked
 // phone. Neither route touches pairing.
 app.post('/api/admin/whatsapp/contacts/sync', requireAdmin, wrap(async (req, res) => {
-  res.json(await bridge('/contacts/sync', {}));
+  const out = await bridge('/contacts/sync', {});
+  logWa('contacts_synced', null, req.user.id);
+  res.json(out);
 }));
 
 app.post('/api/admin/whatsapp/contacts/skip', requireAdmin, wrap(async (req, res) => {
-  res.json(await bridge('/contacts/skip', {}));
+  const out = await bridge('/contacts/skip', {});
+  logWa('contacts_skipped', null, req.user.id);
+  res.json(out);
 }));
 
 /** Attachment upload. Same gate as any other outbound message: an image sent to

@@ -254,6 +254,16 @@ button { font: inherit; cursor: pointer; }
 .attach-chip .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .attach-chip .attach-thumb, .attach-chip .attach-icon { width: 28px; height: 28px; }
 /* Dropping files anywhere over the thread is the same as picking them. */
+/* --- WhatsApp connection history --- */
+.wa-log { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px;
+  display: flex; flex-direction: column; gap: 10px; max-height: 260px; overflow-y: auto; }
+.wa-ev { display: grid; grid-template-columns: 8px 1fr; gap: 10px; align-items: start; font-size: 13px; }
+.wa-ev i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-top: 6px; }
+.wa-ev.on i { background: var(--accent); }
+.wa-ev.off i { background: var(--bad); }
+.wa-ev .t { color: var(--muted); font-size: 12px; }
+.wa-log .none { color: var(--muted); font-size: 13px; }
+
 .pick-bar { display: flex; align-items: center; gap: 10px; padding: 8px 14px;
   border-top: 1px solid var(--line); background: var(--panel-2); font-size: 13px; }
 .pick-bar span { flex: 1; color: var(--muted); }
