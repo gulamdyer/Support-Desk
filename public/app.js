@@ -1672,7 +1672,11 @@ const isSafari = /^((?!chrome|chromium|crios|android|fxios|edg).)*safari/i.test(
 
 function refreshInstallOption() {
   const canPrompt = !!window.__installPrompt;
-  $('installApp').hidden = installed() || !(canPrompt || isSafari);
+  // On iOS every browser is WebKit — Chrome and Edge there are Safari in a
+  // different shell — and all of them add to the home screen through the same
+  // Share sheet. Keying this on "is Safari" hid the option in Chrome for
+  // iPhone, where it works perfectly well.
+  $('installApp').hidden = installed() || !(canPrompt || isIOS || isSafari);
 }
 window.addEventListener('app-installable', refreshInstallOption);
 window.addEventListener('appinstalled', () => {
@@ -1693,9 +1697,11 @@ $('installApp').onclick = async () => {
     if (outcome !== 'accepted') refreshInstallOption();
     return;
   }
+  // Do not name the browser: the same steps are right in Safari, Chrome and
+  // Edge on iOS, and naming one of them reads as "you are in the wrong app".
   $('installSteps').innerHTML = isIOS
-    ? 'In Safari, tap <strong>Share</strong> at the bottom of the screen, then choose <strong>Add to Home Screen</strong>.'
-    : 'In Safari, open the <strong>File</strong> menu and choose <strong>Add to Dock</strong>. On iPhone or iPad, tap <strong>Share</strong> then <strong>Add to Home Screen</strong>.';
+    ? 'Tap <strong>Share</strong> in the browser toolbar, then choose <strong>Add to Home Screen</strong>.'
+    : 'In Safari, open the <strong>File</strong> menu and choose <strong>Add to Dock</strong>.';
   $('installModal').hidden = false;
 };
 const closeInstall = () => { $('installModal').hidden = true; };
