@@ -86,6 +86,24 @@ const nameOf = (c) => c.is_group
   ? (c.name || maskNumber(c.id.split('@')[0]))
   : (c.display_name || maskNumber(c.contact_phone || c.id.split('@')[0]));
 // Outbound files are stored with a random prefix; show the name the agent picked.
+const extOf = (name) => String(name).toLowerCase().split('.').pop();
+/** A document reads as a card, the way it does in WhatsApp: the file's badge,
+ *  its name, and its type — not a bare link that only says "attachment". */
+function docCard(m, url) {
+  const name = fileLabel(m);
+  const ext = extOf(name);
+  const pdf = ext === 'pdf';
+  return `<button class="doc" data-doc="${url}" data-docname="${esc(name)}" data-docpdf="${pdf ? 1 : 0}"
+    draggable="true" data-dl="${url}?download=1" data-dlname="${esc(name)}"
+    title="${pdf ? 'Open' : 'Download'} ${esc(name)}">
+    <span class="doc-icon ${pdf ? 'pdf' : ''}">${esc(ext.slice(0, 4).toUpperCase() || 'FILE')}</span>
+    <span class="doc-text">
+      <span class="doc-name">${esc(name)}</span>
+      <span class="doc-kind">${pdf ? 'PDF · tap to read' : 'tap to download'}</span>
+    </span>
+  </button>`;
+}
+
 const MIME = {
   pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
   gif: 'image/gif', webp: 'image/webp', heic: 'image/heic', svg: 'image/svg+xml',
@@ -195,7 +213,7 @@ function renderMessages(messages, isGroup) {
           <div class="voice-wave"></div>
           <span class="voice-time">0:00</span>
         </div>`
-      : `<a href="${url}" target="_blank" draggable="true" data-dl="${url}?download=1" data-dlname="${esc(fileLabel(m))}">📎 ${esc(fileLabel(m))}</a>`;
+      : docCard(m, url);
     return sep + `<div class="msg ${m.from_me ? 'out' : ''} ${m.status === 'failed' ? 'fail' : ''}">
       <button class="msg-caret" data-menu="${esc(m.id)}" title="Message actions" aria-label="Message actions" aria-haspopup="menu"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
       ${!m.from_me && isGroup && m.sender_id ? `<div class="from">${esc(senderOf(m))}</div>` : ''}
@@ -230,6 +248,50 @@ $('messages').addEventListener('dragstart', (e) => {
   e.dataTransfer.clearData();
   e.dataTransfer.setData('DownloadURL', `${mimeOf(name)}:${name}:${url}`);
   e.dataTransfer.effectAllowed = 'copy';
+});
+
+// --- reading a document ---------------------------------------------------
+// A PDF opens in a viewer so an agent can read a licence or certificate in
+// place. Anything else still downloads — that is the only safe way to hand
+// over a file type the browser might execute.
+function openDoc(url, name) {
+  $('docTitle').textContent = name;
+  $('docOpen').href = url;
+  $('docSave').href = `${url}?download=1`;
+  $('docSave').setAttribute('download', name);
+  $('docFallback').hidden = true;
+  $('docFrame').hidden = false;
+  $('docFrame').src = url;
+  $('docModal').hidden = false;
+}
+
+const closeDoc = () => { $('docModal').hidden = true; $('docFrame').src = 'about:blank'; };
+$('docClose').onclick = closeDoc;
+$('docModal').onclick = (e) => { if (e.target.id === 'docModal') closeDoc(); };
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('docModal').hidden) closeDoc(); });
+
+// iOS Safari refuses to render a PDF in an iframe and leaves it blank, so say
+// so rather than showing an empty panel.
+$('docFrame').addEventListener('load', () => {
+  if ($('docModal').hidden) return;
+  try {
+    const d = $('docFrame').contentDocument;
+    if (d && d.body && !d.body.childElementCount && !d.body.textContent.trim()) {
+      $('docFrame').hidden = true;
+      $('docFallback').hidden = false;
+    }
+  } catch { /* cross-origin means the plugin took it — that is a success */ }
+});
+
+$('messages').addEventListener('click', (e) => {
+  const card = e.target.closest('[data-doc]');
+  if (!card || picked.size) return;          // while picking, a tap selects
+  e.preventDefault();
+  if (card.dataset.docpdf === '1') return openDoc(card.dataset.doc, card.dataset.docname);
+  const a = document.createElement('a');
+  a.href = `${card.dataset.doc}?download=1`;
+  a.download = card.dataset.docname;
+  document.body.appendChild(a); a.click(); a.remove();
 });
 
 // --- selecting several messages to forward -------------------------------

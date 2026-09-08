@@ -330,6 +330,25 @@
 </div>
 
 
+<div id="docModal" class="modal" hidden>
+  <div class="sheet wide doc-sheet" role="dialog" aria-modal="true" aria-labelledby="docTitle">
+    <div class="sheet-head">
+      <h2 id="docTitle">Document</h2>
+      <a id="docOpen" class="icon-btn" target="_blank" rel="noopener" title="Open in a new tab" aria-label="Open in a new tab">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg>
+      </a>
+      <a id="docSave" class="icon-btn" title="Download" aria-label="Download">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+      </a>
+      <button id="docClose" class="icon-btn" title="Close" aria-label="Close">&times;</button>
+    </div>
+    <div class="doc-body">
+      <iframe id="docFrame" title="Document preview"></iframe>
+      <p id="docFallback" class="hint" hidden>This browser will not preview the document here. Use <strong>Open in a new tab</strong> or <strong>Download</strong>.</p>
+    </div>
+  </div>
+</div>
+
 <div id="installModal" class="modal" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="installTitle">
     <div class="sheet-head">

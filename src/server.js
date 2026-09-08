@@ -545,7 +545,15 @@ app.get('/media/:file', requireAuth, (req, res) => {
   // ?download=1 is what a drag onto the desktop and the Download action ask
   // for: an image is normally served inline so it can render in the thread,
   // but when it is being saved it has to arrive as a file.
-  if ('download' in req.query || kindOf(ext) === 'document') {
+  //
+  // PDFs are the one document type served inline, so an agent can read a
+  // licence or certificate without downloading it first. The rule this
+  // narrows is still intact — everything else downloads, so an uploaded .html
+  // can never execute as same-origin script against the inbox — and the type
+  // is stated explicitly rather than sniffed, with nosniff set above.
+  const inlinePdf = ext === 'pdf' && !('download' in req.query);
+  if (inlinePdf) res.setHeader('Content-Type', 'application/pdf');
+  if (!inlinePdf && ('download' in req.query || kindOf(ext) === 'document')) {
     res.setHeader('Content-Disposition', `attachment; filename="${name.replace(/"/g, '')}"`);
   }
   res.sendFile(file);
