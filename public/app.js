@@ -86,6 +86,11 @@ const nameOf = (c) => c.is_group
   ? (c.name || maskNumber(c.id.split('@')[0]))
   : (c.display_name || maskNumber(c.contact_phone || c.id.split('@')[0]));
 // Outbound files are stored with a random prefix; show the name the agent picked.
+// iPadOS reports itself as a Mac, so touch points are what actually tell them
+// apart. Used by both the document viewer and the install prompt.
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
 const extOf = (name) => String(name).toLowerCase().split('.').pop();
 /** A document reads as a card, the way it does in WhatsApp: the file's badge,
  *  its name, and its type — not a bare link that only says "attachment". */
@@ -259,9 +264,12 @@ function openDoc(url, name) {
   $('docOpen').href = url;
   $('docSave').href = `${url}?download=1`;
   $('docSave').setAttribute('download', name);
-  $('docFallback').hidden = true;
-  $('docFrame').hidden = false;
-  $('docFrame').src = url;
+  // iOS and iPadOS refuse to render a PDF in a frame and leave it blank —
+  // a platform limitation, not something a page can work around. Everywhere
+  // else, show the frame and trust the browser.
+  $('docFrame').hidden = isIOS;
+  $('docFallback').hidden = !isIOS;
+  $('docFrame').src = isIOS ? 'about:blank' : url;
   $('docModal').hidden = false;
 }
 
@@ -269,19 +277,6 @@ const closeDoc = () => { $('docModal').hidden = true; $('docFrame').src = 'about
 $('docClose').onclick = closeDoc;
 $('docModal').onclick = (e) => { if (e.target.id === 'docModal') closeDoc(); };
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('docModal').hidden) closeDoc(); });
-
-// iOS Safari refuses to render a PDF in an iframe and leaves it blank, so say
-// so rather than showing an empty panel.
-$('docFrame').addEventListener('load', () => {
-  if ($('docModal').hidden) return;
-  try {
-    const d = $('docFrame').contentDocument;
-    if (d && d.body && !d.body.childElementCount && !d.body.textContent.trim()) {
-      $('docFrame').hidden = true;
-      $('docFallback').hidden = false;
-    }
-  } catch { /* cross-origin means the plugin took it — that is a success */ }
-});
 
 $('messages').addEventListener('click', (e) => {
   const card = e.target.closest('[data-doc]');
@@ -1525,8 +1520,6 @@ api('/api/me').then((d) => { me = d.user; start(); }).catch(() => { $('loginPage
 // platform, so the only honest thing there is to say where the button is.
 const installed = () =>
   window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);   // iPadOS reports as Mac
 const isSafari = /^((?!chrome|chromium|crios|android|fxios|edg).)*safari/i.test(navigator.userAgent);
 
 function refreshInstallOption() {
