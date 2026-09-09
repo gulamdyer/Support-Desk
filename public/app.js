@@ -390,7 +390,7 @@ function estimateTilt(img) {
       const gy = grey[i + W - 1] + 2 * grey[i + W] + grey[i + W + 1]
                - grey[i - W - 1] - 2 * grey[i - W] - grey[i - W + 1];
       const mag = Math.hypot(gx, gy);
-      if (mag < 60) continue;                 // ignore noise and soft gradients
+      if (mag < 35) continue;                 // ignore noise and soft gradients
       // Edge direction, folded into a quarter turn: a rectangle's four sides
       // all describe the same tilt.
       let deg = (Math.atan2(gy, gx) * 180) / Math.PI;
@@ -401,13 +401,31 @@ function estimateTilt(img) {
     }
   }
 
-  let peak = 0, total = 0;
-  for (let i = 0; i < bins.length; i += 1) { total += bins[i]; if (bins[i] > bins[peak]) peak = i; }
+  let total = 0;
+  for (let i = 0; i < bins.length; i += 1) total += bins[i];
   if (!total) return null;
-  // Require a genuine peak; a flat histogram means nothing straight was found.
-  if (bins[peak] / total < 0.06) return null;
-  const tilt = peak / 2 - 20;
-  return Math.abs(tilt) < 0.5 ? 0 : tilt;
+
+  // Score each angle with its neighbours. A card photographed by hand never
+  // lands all its edges in one 0.5-degree bin, and scoring bins in isolation
+  // split the evidence three ways and made a real document look like noise.
+  let peak = 1, best = -1;
+  for (let i = 1; i < bins.length - 1; i += 1) {
+    const window = bins[i - 1] + bins[i] + bins[i + 1];
+    if (window > best) { best = window; peak = i; }
+  }
+  // The bar has to be set against what a FLAT histogram would score, not an
+  // absolute number: three bins out of eighty-one is already 3.7% by
+  // definition, so any fixed threshold near that accepts pure noise and
+  // invents a tilt. Demand well clear of it.
+  const flat = 3 / bins.length;
+  if (best / total < flat * 2.5) return null;
+
+  // Centre of mass across the winning window, so the answer is not quantised
+  // to the bin width.
+  const w = bins[peak - 1] + bins[peak] + bins[peak + 1];
+  const centre = w ? (bins[peak - 1] * (peak - 1) + bins[peak] * peak + bins[peak + 1] * (peak + 1)) / w : peak;
+  const tilt = centre / 2 - 20;
+  return Math.abs(tilt) < 0.4 ? 0 : Math.round(tilt * 10) / 10;
 }
 
 $('imgStraighten').onclick = () => {
