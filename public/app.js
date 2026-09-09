@@ -516,18 +516,20 @@ function flattenCard(img) {
   const len = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
   const wide = (len(src[0], src[1]) + len(src[3], src[2])) / 2;
   const tall = (len(src[0], src[3]) + len(src[1], src[2])) / 2;
-  // Averaging the sides leaves the picture still slightly squashed, because
-  // the whole card is foreshortened, not just its far edge. A card has a known
-  // shape, so use it — but only when what was found is roughly card-shaped, so
-  // a photographed sheet of paper is not squeezed into a licence.
+  // Averaging the sides leaves the card still slightly squashed, because the
+  // whole of it is foreshortened, not just the far edge. A card has a known
+  // shape, so use it — in either orientation, since a card photographed
+  // sideways is just as common — but only when what was found is roughly
+  // card-shaped, so a photographed sheet of paper is not squeezed into one.
   const measured = wide / tall;
+  const shape = measured > 1.2 && measured < 2.4 ? CARD_RATIO
+    : measured > 1 / 2.4 && measured < 1 / 1.2 ? 1 / CARD_RATIO
+    : measured;
   // A card 1600 pixels across is already more than can be read on any screen
   // here, and a modern phone photo would otherwise produce a redrawn image of
   // tens of megabytes to hold in memory.
   const out = { w: Math.min(1600, Math.round(wide)), h: 0 };
-  out.h = Math.round(measured > 1.2 && measured < 2.4
-    ? out.w / CARD_RATIO
-    : (tall * out.w) / wide);
+  out.h = Math.round(out.w / shape);
   if (out.w < 40 || out.h < 40) return null;
 
   const inv = homography([[0, 0], [out.w, 0], [out.w, out.h], [0, out.h]], src);
