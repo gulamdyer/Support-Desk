@@ -288,6 +288,7 @@ $('messages').addEventListener('dragstart', (e) => {
 // phone photo: small, sometimes sideways. Zoom and rotate are what make it
 // readable without downloading it first.
 let zoom = 1, spin = 0, tilt = 0, panX = 0, panY = 0, viewingId = null;
+let flatFrom = null;                     // the untouched photo, while a flattened one is shown
 const pointers = new Map();
 let pinchStart = 0, zoomStart = 1;
 
@@ -358,7 +359,9 @@ function openImage(url, name, id, deg) {
   $('imgSave').setAttribute('download', name);
   spin = Number(deg) || 0;                 // whatever the team last set
   zoom = 1; panX = 0; panY = 0; tilt = 0;
+  flatFrom = null;
   $('imgStraighten').setAttribute('aria-pressed', 'false');
+  $('imgFlatten').setAttribute('aria-pressed', 'false');
   $('imgView').src = url;
   $('imgModal').hidden = false;
   applyImgTransform();
@@ -369,7 +372,8 @@ function openImage(url, name, id, deg) {
 $('imgView').addEventListener('load', applyImgTransform);
 window.addEventListener('resize', () => { if (!$('imgModal').hidden) applyImgTransform(); });
 const closeImage = () => {
-  $('imgModal').hidden = true; $('imgView').src = ''; viewingId = null; pointers.clear();
+  $('imgModal').hidden = true; $('imgView').src = ''; viewingId = null; flatFrom = null;
+  pointers.clear();
 };
 
 $('imgIn').onclick = () => setZoom(zoom * 1.4);
@@ -474,6 +478,114 @@ $('imgStraighten').onclick = () => {
   markStraightened(true);
 };
 const markStraightened = (on) => $('imgStraighten').setAttribute('aria-pressed', String(on));
+
+
+/** Flatten a card photographed at an angle.
+ *
+ *  A licence held up to a phone camera is not a rectangle in the picture: the
+ *  far edge is further away, so it comes out a trapezoid. Straightening cannot
+ *  fix that — it is a turn, and this is a projection. Find the four corners of
+ *  the card, work out the transform that puts them on a clean rectangle, and
+ *  redraw it. Same arithmetic as the straighten button, on the pixels already
+ *  here; nothing is uploaded anywhere.
+ *
+ *  The result replaces the picture rather than sitting on top of it as a CSS
+ *  transform, so zoom, pan, rotate, sharpen and download all keep working
+ *  without knowing anything about it.
+ */
+const CARD_RATIO = 85.6 / 54;            // ID-1: every licence and Emirates ID
+
+function flattenCard(img) {
+  if (typeof findCard !== 'function') return null;
+  const W = 720;
+  const H = Math.max(1, Math.round((img.naturalHeight / img.naturalWidth) * W));
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0, W, H);
+  const px = ctx.getImageData(0, 0, W, H).data;
+  const grey = new Float32Array(W * H);
+  for (let i = 0; i < W * H; i += 1) {
+    grey[i] = 0.299 * px[i * 4] + 0.587 * px[i * 4 + 1] + 0.114 * px[i * 4 + 2];
+  }
+  const quad = findCard(grey, W, H);
+  if (!quad) return null;
+
+  const k = img.naturalWidth / W;
+  const src = quad.map(([x, y]) => [x * k, y * k]);
+  const len = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const wide = (len(src[0], src[1]) + len(src[3], src[2])) / 2;
+  const tall = (len(src[0], src[3]) + len(src[1], src[2])) / 2;
+  // Averaging the sides leaves the picture still slightly squashed, because
+  // the whole card is foreshortened, not just its far edge. A card has a known
+  // shape, so use it — but only when what was found is roughly card-shaped, so
+  // a photographed sheet of paper is not squeezed into a licence.
+  const measured = wide / tall;
+  // A card 1600 pixels across is already more than can be read on any screen
+  // here, and a modern phone photo would otherwise produce a redrawn image of
+  // tens of megabytes to hold in memory.
+  const out = { w: Math.min(1600, Math.round(wide)), h: 0 };
+  out.h = Math.round(measured > 1.2 && measured < 2.4
+    ? out.w / CARD_RATIO
+    : (tall * out.w) / wide);
+  if (out.w < 40 || out.h < 40) return null;
+
+  const inv = homography([[0, 0], [out.w, 0], [out.w, out.h], [0, out.h]], src);
+  if (!inv) return null;
+
+  const full = document.createElement('canvas');
+  full.width = img.naturalWidth; full.height = img.naturalHeight;
+  full.getContext('2d').drawImage(img, 0, 0);
+  const from = full.getContext('2d').getImageData(0, 0, full.width, full.height).data;
+
+  const dest = document.createElement('canvas');
+  dest.width = out.w; dest.height = out.h;
+  const dctx = dest.getContext('2d');
+  const to = dctx.createImageData(out.w, out.h);
+  const SW = full.width, SH = full.height;
+  for (let y = 0; y < out.h; y += 1) {
+    for (let x = 0; x < out.w; x += 1) {
+      const w = inv[2][0] * x + inv[2][1] * y + inv[2][2];
+      const sx = (inv[0][0] * x + inv[0][1] * y + inv[0][2]) / w;
+      const sy = (inv[1][0] * x + inv[1][1] * y + inv[1][2]) / w;
+      const x0 = Math.floor(sx), y0 = Math.floor(sy);
+      const d = (y * out.w + x) * 4;
+      if (x0 < 0 || y0 < 0 || x0 >= SW - 1 || y0 >= SH - 1) { to.data[d + 3] = 255; continue; }
+      // Blend the four neighbours. Nearest-pixel sampling is cheaper but
+      // roughens exactly what this is for — the small print.
+      const fx = sx - x0, fy = sy - y0;
+      const a = (y0 * SW + x0) * 4, b = a + 4, e = ((y0 + 1) * SW + x0) * 4, f = e + 4;
+      for (let ch = 0; ch < 3; ch += 1) {
+        to.data[d + ch] =
+          (from[a + ch] * (1 - fx) + from[b + ch] * fx) * (1 - fy) +
+          (from[e + ch] * (1 - fx) + from[f + ch] * fx) * fy;
+      }
+      to.data[d + 3] = 255;
+    }
+  }
+  dctx.putImageData(to, 0, 0);
+  return dest.toDataURL('image/jpeg', 0.92);   // the source was a photo; PNG only bloats it
+}
+
+$('imgFlatten').onclick = () => {
+  if (flatFrom) {                        // second tap puts the photo back
+    const src = flatFrom;
+    flatFrom = null;
+    $('imgFlatten').setAttribute('aria-pressed', 'false');
+    resetImg();
+    $('imgView').src = src;
+    return;
+  }
+  const img = $('imgView');
+  if (!img.naturalWidth) return;
+  let flat = null;
+  try { flat = flattenCard(img); } catch { flat = null; }
+  if (!flat) return toast('No card found in this photo — try the straighten button.');
+  flatFrom = img.src;
+  $('imgFlatten').setAttribute('aria-pressed', 'true');
+  resetImg();                            // the new picture needs its own fit
+  img.src = flat;
+};
 
 $('imgReset').onclick = resetImg;
 $('imgClose').onclick = closeImage;
