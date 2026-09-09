@@ -549,7 +549,10 @@ function openDoc(url, name) {
   // have shown something. On iOS the escape hatch sits under the frame rather
   // than replacing it, so a blank result still has a way out.
   $('docFrame').hidden = false;
-  $('docFrame').src = url;
+  // #view=Fit tells the built-in PDF plugin to fit the whole page in the frame.
+  // The plugin's own panning is not scriptable from here, so the only way to
+  // stop a page being dragged off to one side is to leave nothing to drag to.
+  $('docFrame').src = `${url}#view=Fit`;
   $('docFallback').hidden = !isIOS;
   $('docModal').hidden = false;
 }
