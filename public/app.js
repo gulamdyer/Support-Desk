@@ -335,7 +335,11 @@ function setZoom(next) {
   clampPan();
   applyImgTransform();
 }
-function resetImg() { zoom = 1; panX = 0; panY = 0; tilt = 0; applyImgTransform(); }
+function resetImg() {
+  zoom = 1; panX = 0; panY = 0; tilt = 0;
+  $('imgStraighten').setAttribute('aria-pressed', 'false');
+  applyImgTransform();
+}
 
 /** Save the angle so the next person sees it straight too. Best effort — a
  *  failed save must not stop the agent reading the document in front of them. */
@@ -354,6 +358,7 @@ function openImage(url, name, id, deg) {
   $('imgSave').setAttribute('download', name);
   spin = Number(deg) || 0;                 // whatever the team last set
   zoom = 1; panX = 0; panY = 0; tilt = 0;
+  $('imgStraighten').setAttribute('aria-pressed', 'false');
   $('imgView').src = url;
   $('imgModal').hidden = false;
   applyImgTransform();
@@ -457,14 +462,18 @@ function estimateTilt(img) {
 }
 
 $('imgStraighten').onclick = () => {
-  if (tilt) { tilt = 0; applyImgTransform(); return; }   // tap again to undo
+  // No toast on success: the picture visibly straightens, and the button
+  // lighting up says it can be tapped again to undo. Only the cases where
+  // nothing appears to happen need words.
+  if (tilt) { tilt = 0; applyImgTransform(); markStraightened(false); return; }
   const lean = estimateTilt($('imgView'));
   if (lean === null) return toast('Nothing straight enough to measure in this photo.');
   if (lean === 0) return toast('Already straight.');
   tilt = -lean;                      // turn against the lean, not with it
   applyImgTransform();
-  toast(`Straightened by ${tilt > 0 ? '+' : ''}${tilt.toFixed(1)}°. Tap again to undo.`);
+  markStraightened(true);
 };
+const markStraightened = (on) => $('imgStraighten').setAttribute('aria-pressed', String(on));
 
 $('imgReset').onclick = resetImg;
 $('imgClose').onclick = closeImage;
