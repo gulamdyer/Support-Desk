@@ -289,12 +289,16 @@ button { font: inherit; cursor: pointer; }
 .img-stage { flex: 1; min-width: 0; min-height: 0; position: relative; overflow: hidden;
   background: #0a0d10; touch-action: none; cursor: grab; }
 .img-stage.panning { cursor: grabbing; }
-/* Taken out of flow and centred with inset+margin. A transform only changes
-   how the image is PAINTED, never how much room it claims — so an unconstrained
-   img keeps the layout box of a 3000px photo and pushes the whole panel past
-   the screen. Absolute positioning is what lets the transform do the sizing. */
-#imgView { position: absolute; inset: 0; margin: auto;
-  max-width: none; max-height: none; transform-origin: center center;
+/* Out of flow, because a transform changes only how the image is PAINTED and
+   never how much room it claims — an unconstrained img keeps the layout box of
+   a 3000px photo and would push the panel past the screen.
+   Anchored at the stage centre with origin 0 0, and the transform ends with
+   translate(-50%,-50%) to bring the image's own centre onto that point.
+   `margin:auto` cannot do this: for an absolutely positioned element LARGER
+   than its container the auto margins collapse asymmetrically, which parked a
+   2400px photo outside the clip region entirely. */
+#imgView { position: absolute; left: 50%; top: 50%; transform-origin: 0 0;
+  max-width: none; max-height: none;
   transition: transform .12s ease-out; user-select: none; -webkit-user-drag: none; }
 #imgView.enhanced { filter: contrast(1.35) brightness(1.06) saturate(.85); }
 .icon-btn[aria-pressed="true"] { color: var(--accent); }
