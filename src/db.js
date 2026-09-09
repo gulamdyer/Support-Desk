@@ -62,7 +62,8 @@ CREATE TABLE IF NOT EXISTS messages (
   status      TEXT NOT NULL DEFAULT 'received',
                 -- received | queued | sending | sent | failed
   error       TEXT,
-  reply_to    TEXT            -- id (or wa_id) of the message this one quotes
+  reply_to    TEXT,           -- id (or wa_id) of the message this one quotes
+  media_rot   INTEGER NOT NULL DEFAULT 0  -- 0/90/180/270, set by whoever straightened it
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_msg_wa ON messages(wa_id) WHERE wa_id IS NOT NULL;
@@ -133,6 +134,11 @@ for (const [col, ddl] of [
 }
 if (!db.prepare(`PRAGMA table_info(messages)`).all().some((c) => c.name === 'reply_to')) {
   db.exec(`ALTER TABLE messages ADD COLUMN reply_to TEXT`);
+}
+// Straightening a sideways photo is worth doing once for the whole team, not
+// once per agent per viewing, so the angle lives with the message.
+if (!db.prepare(`PRAGMA table_info(messages)`).all().some((c) => c.name === 'media_rot')) {
+  db.exec(`ALTER TABLE messages ADD COLUMN media_rot INTEGER NOT NULL DEFAULT 0`);
 }
 
 // JIDs appear as "<digits>@lid", "<digits>@s.whatsapp.net" or with a device
@@ -377,6 +383,7 @@ const S = {
   upsertContact,
   // Keyed by id because that is what the bridge sends and what the dedupe in
   // syncContacts compares against.
+  setMediaRotation: db.prepare(`UPDATE messages SET media_rot = ? WHERE id = ? AND media_path IS NOT NULL`),
   contactsAll: db.prepare(`SELECT k.key AS key, c.name, c.phone
     FROM contact_keys k JOIN contacts c ON c.id = k.contact_id`),
   // People, not ids — this is the number the UI shows.

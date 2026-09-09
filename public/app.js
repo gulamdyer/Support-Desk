@@ -236,7 +236,7 @@ function renderMessages(messages, isGroup) {
       : m.from_me ? '✓ sent' : '';
     const url = m.media_path ? `/media/${encodeURIComponent(m.media_path.split('/').pop())}` : '';
     const media = !m.media_path ? ''
-      : m.media_type === 'image' ? `<img src="${url}" alt="" draggable="true" data-dl="${url}?download=1" data-dlname="${esc(fileLabel(m))}">`
+      : m.media_type === 'image' ? `<img src="${url}" alt="" draggable="true" data-dl="${url}?download=1" data-dlname="${esc(fileLabel(m))}" data-msg="${esc(m.id)}" data-rot="${Number(m.media_rot) || 0}">`
       : m.media_type === 'audio' ? `
         <div class="voice" data-src="${url}">
           <button class="voice-play" aria-label="Play voice message">
@@ -287,35 +287,139 @@ $('messages').addEventListener('dragstart', (e) => {
 // A licence or a plate number is often the whole message, and it arrives as a
 // phone photo: small, sometimes sideways. Zoom and rotate are what make it
 // readable without downloading it first.
-let zoom = 1, spin = 0, panX = 0, panY = 0;
+let zoom = 1, spin = 0, tilt = 0, panX = 0, panY = 0, viewingId = null;
 const pointers = new Map();
 let pinchStart = 0, zoomStart = 1;
 
+/** The scale at which the photo exactly fills the frame. Everything else is a
+ *  multiple of this, so 100% means "as large as it can be" — the useful
+ *  reading size — rather than "actual pixels", which for a phone photo is
+ *  either far too big or, for a small one, uselessly small. */
+function fitScale() {
+  const img = $('imgView'), stage = $('imgStage');
+  if (!img.naturalWidth || !stage.clientWidth) return 1;
+  const sideways = spin % 180 !== 0;
+  const w = sideways ? img.naturalHeight : img.naturalWidth;
+  const h = sideways ? img.naturalWidth : img.naturalHeight;
+  return Math.min((stage.clientWidth - 24) / w, (stage.clientHeight - 24) / h);
+}
+
 function applyImgTransform() {
-  $('imgView').style.transform = `translate(${panX}px, ${panY}px) scale(${zoom}) rotate(${spin}deg)`;
+  const scale = fitScale() * zoom;
+  $('imgView').style.transform = `translate(${panX}px, ${panY}px) scale(${scale}) rotate(${spin + tilt}deg)`;
   $('imgZoom').textContent = `${Math.round(zoom * 100)}%`;
 }
 function setZoom(next) {
-  zoom = Math.min(8, Math.max(0.25, next));
+  zoom = Math.min(8, Math.max(0.5, next));
   if (zoom <= 1) { panX = 0; panY = 0; }   // nothing to pan once it fits
   applyImgTransform();
 }
-function resetImg() { zoom = 1; spin = 0; panX = 0; panY = 0; applyImgTransform(); }
+function resetImg() { zoom = 1; panX = 0; panY = 0; tilt = 0; applyImgTransform(); }
 
-function openImage(url, name) {
+/** Save the angle so the next person sees it straight too. Best effort — a
+ *  failed save must not stop the agent reading the document in front of them. */
+function rememberRotation() {
+  if (!viewingId) return;
+  api(`/api/messages/${encodeURIComponent(viewingId)}/rotation`, { deg: spin }).catch(() => {});
+}
+
+function openImage(url, name, id, deg) {
+  viewingId = id || null;
   $('imgTitle').textContent = name;
-  $('imgView').src = url;
+  $('imgView').classList.remove('enhanced');
+  $('imgEnhance').setAttribute('aria-pressed', 'false');
   $('imgView').alt = name;
   $('imgSave').href = `${url}?download=1`;
   $('imgSave').setAttribute('download', name);
-  resetImg();
+  spin = Number(deg) || 0;                 // whatever the team last set
+  zoom = 1; panX = 0; panY = 0; tilt = 0;
+  $('imgView').src = url;
   $('imgModal').hidden = false;
+  applyImgTransform();
 }
-const closeImage = () => { $('imgModal').hidden = true; $('imgView').src = ''; pointers.clear(); };
+
+// naturalWidth is only known once the file has loaded, and the fit depends on
+// it — so the transform is recomputed then, and whenever the frame resizes.
+$('imgView').addEventListener('load', applyImgTransform);
+window.addEventListener('resize', () => { if (!$('imgModal').hidden) applyImgTransform(); });
+const closeImage = () => {
+  $('imgModal').hidden = true; $('imgView').src = ''; viewingId = null; pointers.clear();
+};
 
 $('imgIn').onclick = () => setZoom(zoom * 1.4);
 $('imgOut').onclick = () => setZoom(zoom / 1.4);
-$('imgRotate').onclick = () => { spin = (spin + 90) % 360; applyImgTransform(); };
+$('imgRotate').onclick = () => {
+  spin = (spin + 90) % 360;
+  panX = 0; panY = 0;      // the old offset means nothing at the new angle
+  applyImgTransform();
+  rememberRotation();
+};
+$('imgEnhance').onclick = () => {
+  const on = $('imgView').classList.toggle('enhanced');
+  $('imgEnhance').setAttribute('aria-pressed', String(on));
+};
+/** Estimate how far the picture is tilted, and correct it.
+ *
+ *  Classical, not a model: sample the image small, take Sobel gradients, and
+ *  histogram the angle of every strong edge. Printed documents are full of
+ *  straight lines, so the peak of that histogram is the tilt. Only ±20° is
+ *  considered — a bigger correction is a rotation, which is the other button.
+ *  Returns null when no direction dominates, so a photo with nothing straight
+ *  in it is left alone rather than nudged at random.
+ */
+function estimateTilt(img) {
+  const W = 480;
+  const h = Math.max(1, Math.round((img.naturalHeight / img.naturalWidth) * W));
+  const c = document.createElement('canvas');
+  c.width = W; c.height = h;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0, W, h);
+  const px = ctx.getImageData(0, 0, W, h).data;
+
+  const grey = new Float32Array(W * h);
+  for (let i = 0; i < W * h; i += 1) {
+    grey[i] = 0.299 * px[i * 4] + 0.587 * px[i * 4 + 1] + 0.114 * px[i * 4 + 2];
+  }
+
+  const bins = new Float32Array(81);          // -20.0° .. +20.0° in 0.5° steps
+  for (let y = 1; y < h - 1; y += 1) {
+    for (let x = 1; x < W - 1; x += 1) {
+      const i = y * W + x;
+      const gx = grey[i - W + 1] + 2 * grey[i + 1] + grey[i + W + 1]
+               - grey[i - W - 1] - 2 * grey[i - 1] - grey[i + W - 1];
+      const gy = grey[i + W - 1] + 2 * grey[i + W] + grey[i + W + 1]
+               - grey[i - W - 1] - 2 * grey[i - W] - grey[i - W + 1];
+      const mag = Math.hypot(gx, gy);
+      if (mag < 60) continue;                 // ignore noise and soft gradients
+      // Edge direction, folded into a quarter turn: a rectangle's four sides
+      // all describe the same tilt.
+      let deg = (Math.atan2(gy, gx) * 180) / Math.PI;
+      deg = ((deg % 90) + 90) % 90;
+      if (deg > 45) deg -= 90;
+      if (deg < -20 || deg > 20) continue;
+      bins[Math.round((deg + 20) * 2)] += mag;
+    }
+  }
+
+  let peak = 0, total = 0;
+  for (let i = 0; i < bins.length; i += 1) { total += bins[i]; if (bins[i] > bins[peak]) peak = i; }
+  if (!total) return null;
+  // Require a genuine peak; a flat histogram means nothing straight was found.
+  if (bins[peak] / total < 0.06) return null;
+  const tilt = peak / 2 - 20;
+  return Math.abs(tilt) < 0.5 ? 0 : tilt;
+}
+
+$('imgStraighten').onclick = () => {
+  if (tilt) { tilt = 0; applyImgTransform(); return; }   // tap again to undo
+  const lean = estimateTilt($('imgView'));
+  if (lean === null) return toast('Nothing straight enough to measure in this photo.');
+  if (lean === 0) return toast('Already straight.');
+  tilt = -lean;                      // turn against the lean, not with it
+  applyImgTransform();
+  toast(`Straightened by ${tilt > 0 ? '+' : ''}${tilt.toFixed(1)}°. Tap again to undo.`);
+};
+
 $('imgReset').onclick = resetImg;
 $('imgClose').onclick = closeImage;
 $('imgModal').onclick = (e) => { if (e.target.id === 'imgModal') closeImage(); };
@@ -404,7 +508,8 @@ $('messages').addEventListener('click', (e) => {
   const img = e.target.closest('.msg img[data-dl]');
   if (img && !picked.size) {
     e.preventDefault();
-    return openImage(img.getAttribute('src'), img.dataset.dlname || 'Photo');
+    return openImage(img.getAttribute('src'), img.dataset.dlname || 'Photo',
+      img.dataset.msg, img.dataset.rot);
   }
   const card = e.target.closest('[data-doc]');
   if (!card || picked.size) return;          // while picking, a tap selects

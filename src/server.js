@@ -538,6 +538,17 @@ app.post('/api/messages/:id/forward', (req, res) => {
   }
 });
 
+/** Remember which way up an attachment should be read. Shared, not per agent:
+ *  a card straightened once is straight for the whole team from then on. */
+app.post('/api/messages/:id/rotation', (req, res) => {
+  const deg = Number(req.body?.deg);
+  if (![0, 90, 180, 270].includes(deg)) return res.status(422).json({ error: 'Rotation must be 0, 90, 180 or 270.' });
+  const r = S.setMediaRotation.run(deg, req.params.id);
+  if (!r.changes) return res.status(404).json({ error: 'No attachment on that message.' });
+  broadcast({ type: 'message', message: S.message.get(req.params.id) });
+  res.json({ ok: true, deg });
+});
+
 app.post('/api/messages/:id/retry', (req, res) => {
   const msg = S.message.get(req.params.id);
   if (!msg || msg.status !== 'failed') return res.status(404).json({ error: 'No failed message with that id' });
