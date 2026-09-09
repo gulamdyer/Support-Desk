@@ -283,6 +283,98 @@ $('messages').addEventListener('dragstart', (e) => {
   e.dataTransfer.effectAllowed = 'copy';
 });
 
+// --- viewing an image -----------------------------------------------------
+// A licence or a plate number is often the whole message, and it arrives as a
+// phone photo: small, sometimes sideways. Zoom and rotate are what make it
+// readable without downloading it first.
+let zoom = 1, spin = 0, panX = 0, panY = 0;
+const pointers = new Map();
+let pinchStart = 0, zoomStart = 1;
+
+function applyImgTransform() {
+  $('imgView').style.transform = `translate(${panX}px, ${panY}px) scale(${zoom}) rotate(${spin}deg)`;
+  $('imgZoom').textContent = `${Math.round(zoom * 100)}%`;
+}
+function setZoom(next) {
+  zoom = Math.min(8, Math.max(0.25, next));
+  if (zoom <= 1) { panX = 0; panY = 0; }   // nothing to pan once it fits
+  applyImgTransform();
+}
+function resetImg() { zoom = 1; spin = 0; panX = 0; panY = 0; applyImgTransform(); }
+
+function openImage(url, name) {
+  $('imgTitle').textContent = name;
+  $('imgView').src = url;
+  $('imgView').alt = name;
+  $('imgSave').href = `${url}?download=1`;
+  $('imgSave').setAttribute('download', name);
+  resetImg();
+  $('imgModal').hidden = false;
+}
+const closeImage = () => { $('imgModal').hidden = true; $('imgView').src = ''; pointers.clear(); };
+
+$('imgIn').onclick = () => setZoom(zoom * 1.4);
+$('imgOut').onclick = () => setZoom(zoom / 1.4);
+$('imgRotate').onclick = () => { spin = (spin + 90) % 360; applyImgTransform(); };
+$('imgReset').onclick = resetImg;
+$('imgClose').onclick = closeImage;
+$('imgModal').onclick = (e) => { if (e.target.id === 'imgModal') closeImage(); };
+
+$('imgStage').addEventListener('wheel', (e) => {
+  e.preventDefault();
+  setZoom(zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12));
+}, { passive: false });
+$('imgStage').addEventListener('dblclick', () => setZoom(zoom > 1 ? 1 : 2.5));
+
+// One finger pans, two fingers pinch. Pointer events cover mouse, trackpad and
+// touch with the same code, which is the only reason this stays short.
+$('imgStage').addEventListener('pointerdown', (e) => {
+  $('imgStage').setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  $('imgStage').classList.add('panning');
+  if (pointers.size === 2) {
+    const [a, b] = [...pointers.values()];
+    pinchStart = Math.hypot(a.x - b.x, a.y - b.y);
+    zoomStart = zoom;
+  }
+});
+$('imgStage').addEventListener('pointermove', (e) => {
+  const prev = pointers.get(e.pointerId);
+  if (!prev) return;
+  const next = { x: e.clientX, y: e.clientY };
+  pointers.set(e.pointerId, next);
+
+  if (pointers.size === 2 && pinchStart) {
+    const [a, b] = [...pointers.values()];
+    setZoom(zoomStart * (Math.hypot(a.x - b.x, a.y - b.y) / pinchStart));
+    return;
+  }
+  if (zoom <= 1) return;              // it already fits; dragging would do nothing
+  panX += next.x - prev.x;
+  panY += next.y - prev.y;
+  applyImgTransform();
+});
+const endPointer = (e) => {
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinchStart = 0;
+  if (!pointers.size) $('imgStage').classList.remove('panning');
+};
+$('imgStage').addEventListener('pointerup', endPointer);
+$('imgStage').addEventListener('pointercancel', endPointer);
+
+document.addEventListener('keydown', (e) => {
+  if ($('imgModal').hidden) return;
+  if (e.key === 'Escape') return closeImage();
+  // Escape always closes; the single-letter shortcuts must not fire while
+  // something behind the viewer still has the caret.
+  const t = e.target;
+  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+  if (e.key === '+' || e.key === '=') { e.preventDefault(); setZoom(zoom * 1.4); }
+  if (e.key === '-' || e.key === '_') { e.preventDefault(); setZoom(zoom / 1.4); }
+  if (e.key.toLowerCase() === 'r') { spin = (spin + 90) % 360; applyImgTransform(); }
+  if (e.key === '0') resetImg();
+});
+
 // --- reading a document ---------------------------------------------------
 // A PDF opens in a viewer so an agent can read a licence or certificate in
 // place. Anything else still downloads — that is the only safe way to hand
@@ -309,6 +401,11 @@ $('docModal').onclick = (e) => { if (e.target.id === 'docModal') closeDoc(); };
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('docModal').hidden) closeDoc(); });
 
 $('messages').addEventListener('click', (e) => {
+  const img = e.target.closest('.msg img[data-dl]');
+  if (img && !picked.size) {
+    e.preventDefault();
+    return openImage(img.getAttribute('src'), img.dataset.dlname || 'Photo');
+  }
   const card = e.target.closest('[data-doc]');
   if (!card || picked.size) return;          // while picking, a tap selects
   e.preventDefault();

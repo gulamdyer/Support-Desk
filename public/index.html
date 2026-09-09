@@ -353,6 +353,34 @@
   </div>
 </div>
 
+<div id="imgModal" class="modal" hidden>
+  <div class="sheet wide img-sheet" role="dialog" aria-modal="true" aria-labelledby="imgTitle">
+    <div class="sheet-head">
+      <h2 id="imgTitle">Image</h2>
+      <div class="img-tools">
+        <button id="imgOut" class="icon-btn" title="Zoom out" aria-label="Zoom out">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M8 11h6M20 20l-3.2-3.2"/></svg>
+        </button>
+        <span id="imgZoom" class="img-zoom">100%</span>
+        <button id="imgIn" class="icon-btn" title="Zoom in" aria-label="Zoom in">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M11 8v6M8 11h6M20 20l-3.2-3.2"/></svg>
+        </button>
+        <button id="imgRotate" class="icon-btn" title="Rotate" aria-label="Rotate">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 2v6h-6"/><path d="M20.5 13a9 9 0 1 1-2.6-6.4L21 8"/></svg>
+        </button>
+        <button id="imgReset" class="icon-btn" title="Fit to screen" aria-label="Fit to screen">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+        </button>
+        <a id="imgSave" class="icon-btn" title="Download" aria-label="Download">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        </a>
+        <button id="imgClose" class="icon-btn" title="Close" aria-label="Close">&times;</button>
+      </div>
+    </div>
+    <div id="imgStage" class="img-stage"><img id="imgView" alt=""></div>
+  </div>
+</div>
+
 <div id="docModal" class="modal" hidden>
   <div class="sheet wide doc-sheet" role="dialog" aria-modal="true" aria-labelledby="docTitle">
     <div class="sheet-head">
