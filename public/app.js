@@ -309,9 +309,27 @@ function applyImgTransform() {
   $('imgView').style.transform = `translate(${panX}px, ${panY}px) scale(${scale}) rotate(${spin + tilt}deg)`;
   $('imgZoom').textContent = `${Math.round(zoom * 100)}%`;
 }
+/** Keep the picture reachable. Panning is allowed at any zoom — being told
+ *  "it already fits, you may not move it" is not the computer's call — but it
+ *  cannot be dragged so far that it leaves the frame and looks lost. */
+function clampPan() {
+  const img = $('imgView'), stage = $('imgStage');
+  if (!img.naturalWidth || !stage.clientWidth) return;
+  const scale = fitScale() * zoom;
+  const sideways = spin % 180 !== 0;
+  const shownW = (sideways ? img.naturalHeight : img.naturalWidth) * scale;
+  const shownH = (sideways ? img.naturalWidth : img.naturalHeight) * scale;
+  // The overflow that genuinely needs panning, plus a little slack so a
+  // fitted image can still be nudged aside to see what is behind it.
+  const slackX = Math.max(0, (shownW - stage.clientWidth) / 2) + stage.clientWidth * 0.3;
+  const slackY = Math.max(0, (shownH - stage.clientHeight) / 2) + stage.clientHeight * 0.3;
+  panX = Math.max(-slackX, Math.min(slackX, panX));
+  panY = Math.max(-slackY, Math.min(slackY, panY));
+}
+
 function setZoom(next) {
   zoom = Math.min(8, Math.max(0.5, next));
-  if (zoom <= 1) { panX = 0; panY = 0; }   // nothing to pan once it fits
+  clampPan();
   applyImgTransform();
 }
 function resetImg() { zoom = 1; panX = 0; panY = 0; tilt = 0; applyImgTransform(); }
@@ -350,7 +368,7 @@ $('imgIn').onclick = () => setZoom(zoom * 1.4);
 $('imgOut').onclick = () => setZoom(zoom / 1.4);
 $('imgRotate').onclick = () => {
   spin = (spin + 90) % 360;
-  panX = 0; panY = 0;      // the old offset means nothing at the new angle
+  clampPan();
   applyImgTransform();
   rememberRotation();
 };
@@ -471,9 +489,9 @@ $('imgStage').addEventListener('pointermove', (e) => {
     setZoom(zoomStart * (Math.hypot(a.x - b.x, a.y - b.y) / pinchStart));
     return;
   }
-  if (zoom <= 1) return;              // it already fits; dragging would do nothing
   panX += next.x - prev.x;
   panY += next.y - prev.y;
+  clampPan();
   applyImgTransform();
 });
 const endPointer = (e) => {
