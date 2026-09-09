@@ -198,6 +198,22 @@ button { font: inherit; cursor: pointer; }
   .find-bar { padding: 8px 10px; gap: 6px; }
   .jump-date, .find-count { font-size: 11.5px; }
   .composer { padding: 10px; gap: 8px; }
+  /* iOS zooms the whole page in the moment a text field smaller than 16px
+     takes focus, and it never zooms back out — tap the search box once and
+     the app is left oversized with its edges off the screen until you pinch
+     it back by hand. Sixteen is the threshold. Matching it is the only fix
+     that does not also take deliberate zooming away from people.
+     Heavy-handed on purpose: several fields set `font: inherit` through a
+     class, which outranks a plain element selector, and one field missed is
+     enough to bring the whole thing back. */
+  input, textarea, select { font-size: 16px !important; }
+  /* Two rows were only just wide enough at the old size and no longer fit a
+     phone once the fields grew. Let them use a second line rather than run
+     off the edge. */
+  .reset-all-row { grid-template-columns: 1fr 1fr; }
+  .reset-all-row input { grid-column: 1 / -1; }
+  .custom-range { flex-wrap: wrap; }
+  .custom-range input { flex: 1 1 8em; min-width: 0; }
   .sheet, .sheet.wide { max-width: 100%; max-height: 88vh; }
   .stat-row { grid-template-columns: 1fr; }
   .donut-wrap { justify-content: center; }
