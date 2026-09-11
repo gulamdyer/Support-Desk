@@ -261,7 +261,10 @@ const S = {
          LIMIT 1) AS reply_author,
       (SELECT q.media_type FROM messages q
          WHERE m.reply_to IS NOT NULL AND (q.id = m.reply_to OR q.wa_id = m.reply_to)
-         LIMIT 1) AS reply_media
+         LIMIT 1) AS reply_media,
+      (SELECT q.ts FROM messages q
+         WHERE m.reply_to IS NOT NULL AND (q.id = m.reply_to OR q.wa_id = m.reply_to)
+         LIMIT 1) AS reply_ts
       FROM messages m
       LEFT JOIN users u ON u.id = m.sent_by
       ${joinContact('ct', 'm.sender_id')}
@@ -283,7 +286,10 @@ const S = {
          LIMIT 1) AS reply_author,
       (SELECT q.media_type FROM messages q
          WHERE m.reply_to IS NOT NULL AND (q.id = m.reply_to OR q.wa_id = m.reply_to)
-         LIMIT 1) AS reply_media
+         LIMIT 1) AS reply_media,
+      (SELECT q.ts FROM messages q
+         WHERE m.reply_to IS NOT NULL AND (q.id = m.reply_to OR q.wa_id = m.reply_to)
+         LIMIT 1) AS reply_ts
     FROM messages m
     LEFT JOIN users u ON u.id = m.sent_by
     ${joinContact('ct', 'm.sender_id')}
@@ -301,7 +307,10 @@ const S = {
          LIMIT 1) AS reply_author,
       (SELECT q.media_type FROM messages q
          WHERE m.reply_to IS NOT NULL AND (q.id = m.reply_to OR q.wa_id = m.reply_to)
-         LIMIT 1) AS reply_media
+         LIMIT 1) AS reply_media,
+      (SELECT q.ts FROM messages q
+         WHERE m.reply_to IS NOT NULL AND (q.id = m.reply_to OR q.wa_id = m.reply_to)
+         LIMIT 1) AS reply_ts
     FROM messages m
     LEFT JOIN users u ON u.id = m.sent_by
     ${joinContact('ct', 'm.sender_id')}
@@ -326,7 +335,10 @@ const S = {
          LIMIT 1) AS reply_author,
       (SELECT q.media_type FROM messages q
          WHERE m.reply_to IS NOT NULL AND (q.id = m.reply_to OR q.wa_id = m.reply_to)
-         LIMIT 1) AS reply_media
+         LIMIT 1) AS reply_media,
+      (SELECT q.ts FROM messages q
+         WHERE m.reply_to IS NOT NULL AND (q.id = m.reply_to OR q.wa_id = m.reply_to)
+         LIMIT 1) AS reply_ts
     FROM messages m
     LEFT JOIN users u ON u.id = m.sent_by
     ${joinContact('ct', 'm.sender_id')}

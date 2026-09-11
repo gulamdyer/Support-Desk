@@ -818,6 +818,8 @@ $('messages').onclick = async (e) => {
     e.stopPropagation();
     return menuFor === caret.dataset.menu ? closeMsgMenu() : openMsgMenu(caret, caret.dataset.menu);
   }
+  const quote = e.target.closest('[data-jump]');
+  if (quote && !picked.size) return jumpToQuoted(quote.dataset.jump, Number(quote.dataset.jumpTs));
   const id = e.target.dataset?.retry;
   if (!id) return;
   try { await api(`/api/messages/${encodeURIComponent(id)}/retry`); } catch (err) { toast(err.message); }
@@ -844,6 +846,10 @@ function renderComposer(chat) {
     : 'Reply window closed';
 }
 
+// Whether the thread shows the newest messages, or a stretch of older history
+// reached through a search hit, a date jump or a tapped quote.
+let atTail = true;
+
 async function openChat(id, around = null) {
   const switching = id !== open;
   open = id;
@@ -854,6 +860,8 @@ async function openChat(id, around = null) {
   const url = `/api/chats/${encodeURIComponent(id)}${around ? `?around=${around}` : ''}`;
   const { chat, messages, window: win } = await api(url);
   openWindow = win;
+  atTail = !around;
+  $('toLatest').hidden = atTail;
   // No full number in the header either — the name is the identity.
   $('chatName').textContent = nameOf(chat);
   setAvatar($('chatAvatar'), chat.id, nameOf(chat));
@@ -868,9 +876,17 @@ async function refreshOpen() {
   if (!open) return;
   const { chat, messages, window: win } = await api(`/api/chats/${encodeURIComponent(open)}`);
   openWindow = win;
+  atTail = true;
+  $('toLatest').hidden = true;
   renderMessages(messages, chat.is_group);
   renderComposer(chat);
 }
+
+$('toLatest').onclick = async () => {
+  await openChat(open);
+  const box = $('messages');
+  box.scrollTop = box.scrollHeight;
+};
 
 $('claim').onclick = async () => {
   const chat = chats.find((c) => c.id === open);
@@ -942,7 +958,29 @@ let menuFor = null;      // the message whose menu is open
 function quoteOf(m) {
   if (!m.reply_to || (!m.reply_body && !m.reply_media)) return '';
   const what = realBody(m.reply_body) || PREVIEW_LABEL[m.reply_media] || '📎 Attachment';
-  return `<span class="quote"><i></i><span><b>${esc(m.reply_author || 'Message')}</b><em>${esc(what.slice(0, 120))}</em></span></span>`;
+  return `<button type="button" class="quote" data-jump="${esc(m.reply_to)}" data-jump-ts="${Number(m.reply_ts) || ''}" title="Go to the original message"><i></i><span><b>${esc(m.reply_author || 'Message')}</b><em>${esc(what.slice(0, 120))}</em></span></button>`;
+}
+
+/** Tapping a quote goes to the message it answers, as WhatsApp does. The
+ *  original may be older than the loaded window — the thread only holds the
+ *  newest 500 — so load the stretch of history around it first, the same way
+ *  a search hit in old history is reached. A quote can name the original by
+ *  either of its ids, depending on which side of WhatsApp sent the reply. */
+async function jumpToQuoted(ref, ts) {
+  const find = () => threadCache.find((m) => m.id === ref || m.wa_id === ref);
+  const far = !find() && ts;
+  if (far) await openChat(open, ts);
+  const target = find();
+  if (!target) return toast('The original message is no longer available.');
+  const el = [...document.querySelectorAll('#messages .msg')]
+    .find((m) => m.querySelector(`[data-menu="${CSS.escape(target.id)}"]`));
+  if (!el) return;
+  // A freshly loaded stretch of history opens at its far end, and gliding back
+  // across hundreds of messages took two seconds; arrive there directly.
+  el.scrollIntoView({ block: 'center', behavior: far ? 'auto' : 'smooth' });
+  el.classList.remove('quoted');
+  void el.offsetWidth;                   // restart the flash on a second tap
+  el.classList.add('quoted');
 }
 
 const msgById = (id) => threadCache.find((m) => m.id === id);
@@ -1496,7 +1534,8 @@ function connect() {
       el.className = 'conn ' + (ev.status === 'connected' ? 'ok' : 'bad');
     }
     if (ev.type === 'chats') loadChats();
-    if (ev.type === 'message' && ev.message?.chat_id === open) refreshOpen();
+    // Someone reading older history stays there; the chat list still updates.
+    if (ev.type === 'message' && ev.message?.chat_id === open) { if (atTail) refreshOpen(); else loadChats(); }
     if (ev.type === 'message' && ev.message?.chat_id !== open) loadChats();
   };
   // EventSource cannot see a 401 — it just retries forever, so a dead session is
@@ -2043,7 +2082,9 @@ function start() {
   $('menuRole').textContent = me.is_admin ? 'Administrator' : 'Support agent';
   document.querySelectorAll('.admin-only').forEach((el) => { el.hidden = !me.is_admin; });
   loadChats(); connect();
-  setInterval(refreshOpen, 30000); // keeps the window countdown honest
+  // Keeps the window countdown honest — but reloading the newest messages
+  // under someone reading older history would throw away where they are.
+  setInterval(() => { if (atTail) refreshOpen(); }, 30000);
 }
 
 api('/api/me').then((d) => { me = d.user; start(); })

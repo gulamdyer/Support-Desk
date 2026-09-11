@@ -545,7 +545,18 @@ button { font: inherit; cursor: pointer; }
 
 /* the quote shown inside a bubble */
 .quote { display: flex; gap: 8px; padding: 6px 9px; margin-bottom: 5px; border-radius: 7px;
-  background: color-mix(in srgb, var(--muted) 14%, transparent); }
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  width: 100%; border: 0; color: inherit; text-align: left; }
+/* Back to the newest messages once a quote, a search hit or a date jump has
+   taken the thread into older history. Pulled up over the foot of the list
+   rather than positioned, so it needs no extra wrapper. */
+.to-latest { align-self: flex-end; position: relative; z-index: 2; margin: -50px 16px 12px 0;
+  display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--text);
+  font-size: 12.5px; font-weight: 600; box-shadow: 0 2px 8px rgba(0, 0, 0, .18); }
+/* Where a tapped quote lands: a brief ring, so the eye finds the original. */
+.msg.quoted { animation: quoted 1.8s ease-out; }
+@keyframes quoted { 0%, 35% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: 0 0 0 3px transparent; } }
 .msg.out .quote { background: color-mix(in srgb, #000 14%, transparent); }
 .quote i { width: 3px; border-radius: 3px; background: var(--accent); flex: 0 0 auto; }
 .msg.out .quote i { background: currentColor; opacity: .7; }
