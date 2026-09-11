@@ -247,7 +247,7 @@ function renderMessages(messages, isGroup) {
           <span class="voice-time">0:00</span>
         </div>`
       : docCard(m, url);
-    return sep + `<div class="msg ${m.from_me ? 'out' : ''} ${m.status === 'failed' ? 'fail' : ''}">
+    return sep + `<div class="msg ${m.from_me ? 'out' : ''} ${m.status === 'failed' ? 'fail' : ''} ${m.id === ringed ? 'quoted' : ''}">
       <button class="msg-caret" data-menu="${esc(m.id)}" title="Message actions" aria-label="Message actions" aria-haspopup="menu"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
       ${!m.from_me && isGroup && m.sender_id ? `<div class="from">${esc(senderOf(m))}</div>` : ''}
       ${m.from_me && m.agent_name ? `<div class="from">${esc(m.agent_name)}</div>` : ''}
@@ -260,6 +260,7 @@ function renderMessages(messages, isGroup) {
   initVoice();
   paintCurrentHit();
   renderPicked();   // the thread is rebuilt wholesale; re-mark what is selected
+  syncLatest();
 }
 
 // Dragging an attachment onto the desktop saves it. Chrome reads DownloadURL;
@@ -861,7 +862,6 @@ async function openChat(id, around = null) {
   const { chat, messages, window: win } = await api(url);
   openWindow = win;
   atTail = !around;
-  $('toLatest').hidden = atTail;
   // No full number in the header either — the name is the identity.
   $('chatName').textContent = nameOf(chat);
   setAvatar($('chatAvatar'), chat.id, nameOf(chat));
@@ -877,15 +877,23 @@ async function refreshOpen() {
   const { chat, messages, window: win } = await api(`/api/chats/${encodeURIComponent(open)}`);
   openWindow = win;
   atTail = true;
-  $('toLatest').hidden = true;
   renderMessages(messages, chat.is_group);
   renderComposer(chat);
 }
 
-$('toLatest').onclick = async () => {
-  await openChat(open);
+/** Latest shows whenever the newest messages are out of sight — scrolled up
+ *  by hand, or a quote, search hit or date jump loaded older history — as
+ *  WhatsApp's down arrow does. */
+function syncLatest() {
   const box = $('messages');
-  box.scrollTop = box.scrollHeight;
+  $('toLatest').hidden = atTail && box.scrollTop + box.clientHeight >= box.scrollHeight - 200;
+}
+
+$('toLatest').onclick = async () => {
+  const reload = !atTail;                // older history is loaded; fetch the newest
+  if (reload) await openChat(open);
+  const box = $('messages');
+  box.scrollTo({ top: box.scrollHeight, behavior: reload ? 'auto' : 'smooth' });
 };
 
 $('claim').onclick = async () => {
@@ -966,21 +974,43 @@ function quoteOf(m) {
  *  newest 500 — so load the stretch of history around it first, the same way
  *  a search hit in old history is reached. A quote can name the original by
  *  either of its ids, depending on which side of WhatsApp sent the reply. */
+let ringed = null, ringTimer = 0;       // the original a tapped quote just landed on
+const msgRow = (id) => [...document.querySelectorAll('#messages .msg')]
+  .find((m) => m.querySelector(`[data-menu="${CSS.escape(id)}"]`));
+/** Resolves once a smooth scroll has come to rest. */
+const scrollSettled = (box) => new Promise((done) => {
+  let last = -1, still = 0;
+  const tick = () => {
+    still = box.scrollTop === last ? still + 1 : 0;
+    last = box.scrollTop;
+    if (still >= 3) done(); else requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+});
+
 async function jumpToQuoted(ref, ts) {
   const find = () => threadCache.find((m) => m.id === ref || m.wa_id === ref);
   const far = !find() && ts;
   if (far) await openChat(open, ts);
   const target = find();
   if (!target) return toast('The original message is no longer available.');
-  const el = [...document.querySelectorAll('#messages .msg')]
-    .find((m) => m.querySelector(`[data-menu="${CSS.escape(target.id)}"]`));
+  const el = msgRow(target.id);
   if (!el) return;
   // A freshly loaded stretch of history opens at its far end, and gliding back
   // across hundreds of messages took two seconds; arrive there directly.
   el.scrollIntoView({ block: 'center', behavior: far ? 'auto' : 'smooth' });
-  el.classList.remove('quoted');
-  void el.offsetWidth;                   // restart the flash on a second tap
-  el.classList.add('quoted');
+  // Ring it when it arrives, not as the glide starts: a glide across a few
+  // hundred messages outlasted the ring, so the original landed already faded.
+  // A chat busy enough to redraw meanwhile keeps the ring — see renderMessages.
+  await scrollSettled($('messages'));
+  ringed = target.id;
+  clearTimeout(ringTimer);
+  ringTimer = setTimeout(() => { ringed = null; }, 1800);
+  const row = msgRow(target.id);         // the thread may have been redrawn
+  if (!row) return;
+  row.classList.remove('quoted');
+  void row.offsetWidth;                  // restart the ring on a second tap
+  row.classList.add('quoted');
 }
 
 const msgById = (id) => threadCache.find((m) => m.id === id);
@@ -1069,7 +1099,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMsgMe
 // AGENT scrolls. The thread also auto-scrolls itself on every refresh and on
 // each new message, which would otherwise snatch the menu away mid-click.
 let autoScrolling = 0;
-$('messages').addEventListener('scroll', () => { if (!autoScrolling) closeMsgMenu(); });
+$('messages').addEventListener('scroll', () => { if (!autoScrolling) closeMsgMenu(); syncLatest(); });
 
 // --- in-chat search + jump to date ---------------------------------------
 const closeFind = () => {
