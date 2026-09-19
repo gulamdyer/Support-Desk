@@ -266,7 +266,7 @@ app.get('/api/chats/:id/search', (req, res) => {
   if (!chat) return res.status(404).json({ error: 'Chat not found' });
   const q = String(req.query.q || '').trim();
   if (q.length < 2) return res.status(422).json({ error: 'Type at least two characters.' });
-  res.json({ hits: S.searchThread.all(chat.id, q) });
+  res.json({ hits: S.searchThread.all(chat.id, q, q) });
 });
 
 /** The same search across every conversation — what the sidebar box does once
@@ -274,7 +274,7 @@ app.get('/api/chats/:id/search', (req, res) => {
 app.get('/api/search', (req, res) => {
   const q = String(req.query.q || '').trim();
   if (q.length < 2) return res.status(422).json({ error: 'Type at least two characters.' });
-  res.json({ hits: S.searchAll.all(q) });
+  res.json({ hits: S.searchAll.all(q, q) });
 });
 
 /** Blue ticks happen HERE — when a human opened the chat — never on ingest. */
@@ -570,9 +570,10 @@ app.post('/api/messages/:id/retry', (req, res) => {
     throw err;
   }
 });
-// A retry re-runs the FULL gate, not just the window. Checking only the window
-// let a failed message be retried past the hourly caps and the broadcast guard,
-// which are the limits that actually protect the number.
+// A retry re-runs the gate, not just the window: the broadcast guards have to
+// apply again. The hourly caps are no longer part of this check because they
+// are no longer a refusal — a retried message goes back on the queue and the
+// sender holds it until the hour has room, exactly as it does a new one.
 function assertSendable(msg) {
   checkOutbound(msg.chat_id, msg.body, now(), !!msg.media_path, msg.media_path || null);
 }

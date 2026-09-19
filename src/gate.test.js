@@ -6,7 +6,7 @@ import assert from 'node:assert';
 
 process.chdir(mkdtempSync(`${tmpdir()}/inbox-test-`)); // db.js resolves ./data from cwd
 const { default: S, recordInbound, now } = await import('./db.js');
-const { checkOutbound, windowState, GateError } = await import('./gate.js');
+const { checkOutbound, windowState, nextSendable, GateError } = await import('./gate.js');
 
 const T = now();
 S.addUser.run('agent', 'Agent One', 'x:y', T, 0);   // sent_by has a FK
@@ -16,6 +16,13 @@ const inbound = (chat, ts, body = 'hi') => recordInbound({
 });
 const outbound = (chat, body, ts = T) =>
   S.queue.run(`out-${Math.random()}`, chat, body, ts, 1);
+// A message that actually reached the wire at `at` — what the caps count.
+const sent = (chat, body, at) => {
+  const id = `snt-${Math.random()}`;
+  S.queue.run(id, chat, body, at, 1);
+  S.markSending.run(at, id);
+  S.setSent.run(null, id);
+};
 const rejects = (fn, needle) => {
   try { fn(); assert.fail(`expected rejection containing ${needle!==undefined?needle:''}`); }
   catch (e) {
@@ -40,9 +47,27 @@ assert.equal(windowState('live@s.whatsapp.net').open, true);
 assert.equal(checkOutbound('live@s.whatsapp.net', '  yes we do  '), 'yes we do');
 rejects(() => checkOutbound('live@s.whatsapp.net', '   '), 'empty');
 
-// 4. Per-chat hourly cap stops rapid-fire.
-for (let i = 0; i < 15; i++) outbound('live@s.whatsapp.net', `reply ${i}`);
-rejects(() => checkOutbound('live@s.whatsapp.net', 'one more'), 'Hourly limit');
+// 4. A chat at its hourly cap DELAYS the next message instead of refusing it.
+// Refusing threw away what the agent had typed and stopped the desk mid-shift;
+// holding it back leaves the wire rate exactly as it was.
+for (let i = 0; i < 15; i++) sent('live@s.whatsapp.net', `reply ${i}`, T - 60);
+assert.equal(checkOutbound('live@s.whatsapp.net', 'one more'), 'one more');
+outbound('live@s.whatsapp.net', 'one more');
+assert.equal(nextSendable(T), null, 'a chat at its cap waits its turn');
+
+// 4b. ...but nobody else waits behind it. One busy group stalling every other
+// customer's reply is the failure this ordering exists to prevent.
+inbound('other@s.whatsapp.net', T - 60);
+outbound('other@s.whatsapp.net', 'be right with you');
+assert.equal(nextSendable(T)?.chat_id, 'other@s.whatsapp.net');
+
+// 4c. Once the hour has rolled past, the held message goes out on its own.
+assert.equal(nextSendable(T + 3601)?.chat_id, 'live@s.whatsapp.net');
+
+// 4d. The team-wide cap holds rather than refuses, the same way.
+process.env.GLOBAL_HOURLY_CAP = '2';
+assert.equal(nextSendable(T), null, 'the team cap holds everything back');
+delete process.env.GLOBAL_HOURLY_CAP;
 
 // 5. Broadcast guard: identical CONTENT across chats is blocked.
 const BLAST = 'Big sale this weekend — 40% off everything, this weekend only!';
@@ -73,4 +98,4 @@ const dup = { messageId: 'dup-1', chatId: 'live@s.whatsapp.net', senderId: 'x',
 assert.equal(recordInbound(dup), true);
 assert.equal(recordInbound(dup), false);
 
-console.log('✅ gate: 7/7 — reply-only window, rate caps, broadcast guard, short replies, dedupe');
+console.log('✅ gate: 10/10 — reply-only window, caps that delay not refuse, broadcast guard, short replies, dedupe');

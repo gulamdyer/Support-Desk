@@ -135,6 +135,28 @@ for (const [col, ddl] of [
 if (!db.prepare(`PRAGMA table_info(messages)`).all().some((c) => c.name === 'reply_to')) {
   db.exec(`ALTER TABLE messages ADD COLUMN reply_to TEXT`);
 }
+// When the message actually reached the wire, which is not when it was typed.
+// The send caps have to be measured on this: a message held back by a full
+// hour and sent later must count against the hour it went out in, not the one
+// it was written in.
+if (!db.prepare(`PRAGMA table_info(messages)`).all().some((c) => c.name === 'sent_ts')) {
+  db.exec(`ALTER TABLE messages ADD COLUMN sent_ts INTEGER`);
+  // Backfill, or the caps would read zero for the first hour on a database
+  // that already has history — the send limits would quietly reset to empty
+  // at the moment of deploy, which is the one moment they should not.
+  // Queue time is the best estimate available for messages already gone, and
+  // it is right to within the few seconds the pacer takes.
+  db.exec(`UPDATE messages SET sent_ts = ts
+             WHERE from_me = 1 AND sent_ts IS NULL AND status IN ('sent', 'failed')`);
+}
+// Indexed here rather than with the rest of the schema: that block runs before
+// the migrations above, so on an existing database the column does not exist
+// yet and creating this there stops the app from starting at all.
+// The sender asks "how much has gone out in the last hour" every second or so,
+// for the team and for one chat. Partial, so it stays small: only messages
+// that actually reached the wire are in it.
+db.exec(`CREATE INDEX IF NOT EXISTS idx_msg_sent
+           ON messages(sent_ts, chat_id) WHERE sent_ts IS NOT NULL`);
 // Straightening a sideways photo is worth doing once for the whole team, not
 // once per agent per viewing, so the angle lives with the message.
 if (!db.prepare(`PRAGMA table_info(messages)`).all().some((c) => c.name === 'media_rot')) {
@@ -317,15 +339,20 @@ const S = {
     WHERE m.chat_id = ? AND m.ts >= ? ORDER BY m.ts ASC, m.rowid ASC LIMIT 350`),
 
   // Search runs over the whole conversation, not just the loaded window.
-  searchThread: db.prepare(`SELECT id, ts, body, from_me, media_type
+  searchThread: db.prepare(`SELECT id, ts, body, from_me, media_type, media_path
     FROM messages
-    WHERE chat_id = ? AND body <> '' AND body LIKE '%' || ? || '%'
+    WHERE chat_id = ?
+      AND ((body <> '' AND body LIKE '%' || ? || '%')
+        OR (media_path IS NOT NULL
+            AND replace(media_path, 'data/media/', '') LIKE '%' || ? || '%'))
     ORDER BY ts DESC, rowid DESC LIMIT 80`),
   // The same search across every conversation, for the sidebar box. Newest
   // first: a support desk is nearly always looking for something recent.
-  searchAll: db.prepare(`SELECT id, chat_id, ts, body, from_me, media_type
+  searchAll: db.prepare(`SELECT id, chat_id, ts, body, from_me, media_type, media_path
     FROM messages
-    WHERE body <> '' AND body LIKE '%' || ? || '%'
+    WHERE (body <> '' AND body LIKE '%' || ? || '%')
+       OR (media_path IS NOT NULL
+           AND replace(media_path, 'data/media/', '') LIKE '%' || ? || '%')
     ORDER BY ts DESC, rowid DESC LIMIT 50`),
   firstMessageTs: db.prepare(`SELECT MIN(ts) AS ts FROM messages WHERE chat_id = ?`),
   message: db.prepare(`SELECT m.*, u.name AS agent_name,
@@ -362,16 +389,23 @@ const S = {
   // What the bridge needs to attach a quote on the wire.
   quoteSource: db.prepare(`SELECT id, wa_id, chat_id, sender_id, from_me, body FROM messages
     WHERE id = ? OR wa_id = ? LIMIT 1`),
-  nextQueued: db.prepare(`SELECT * FROM messages WHERE status='queued' ORDER BY ts ASC, rowid ASC LIMIT 1`),
+  // A batch, not just the front one: the oldest queued message may belong to a
+  // chat that has had its hour's worth while other people are still waiting.
+  queuedBatch: db.prepare(`SELECT * FROM messages WHERE status='queued'
+    ORDER BY ts ASC, rowid ASC LIMIT 50`),
+  markSending: db.prepare(`UPDATE messages SET status='sending', error=NULL, sent_ts=? WHERE id=?`),
   setStatus: db.prepare(`UPDATE messages SET status=?, error=? WHERE id=?`),
   setSent: db.prepare(`UPDATE messages SET status='sent', wa_id=?, error=NULL WHERE id=?`),
   requeueStuck: db.prepare(`UPDATE messages SET status='queued' WHERE status='sending'`),
 
   // --- outbound gate counters ---
-  chatHourly: db.prepare(`SELECT COUNT(*) AS c FROM messages
-    WHERE chat_id=? AND from_me=1 AND status IN ('queued','sending','sent') AND ts > ?`),
-  globalHourly: db.prepare(`SELECT COUNT(*) AS c FROM messages
-    WHERE from_me=1 AND status IN ('queued','sending','sent') AND ts > ?`),
+  // What actually went out in the last hour. Counting messages that are merely
+  // WAITING would deadlock the sender: once a backlog formed it would hold the
+  // count at the cap forever and nothing would ever leave again.
+  chatSentHourly: db.prepare(`SELECT COUNT(*) AS c FROM messages
+    WHERE chat_id=? AND from_me=1 AND sent_ts > ?`),
+  globalSentHourly: db.prepare(`SELECT COUNT(*) AS c FROM messages
+    WHERE from_me=1 AND sent_ts > ?`),
   duplicateChats: db.prepare(`SELECT COUNT(DISTINCT chat_id) AS c FROM messages
     WHERE from_me=1 AND body=? AND status IN ('queued','sending','sent') AND ts > ?`),
   // The same FILE fanned out is every bit the broadcast that the same text is —

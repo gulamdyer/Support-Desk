@@ -48,13 +48,11 @@ export function checkOutbound(chatId, body, at = now(), hasMedia = false, mediaP
   const w = windowState(chatId, at);
   if (!w.open) throw new GateError(w.reason);
 
-  const hourAgo = at - 3600;
-  if (S.chatHourly.get(chatId, hourAgo).c >= LIMITS.chatHourly()) {
-    throw new GateError(`Hourly limit for this chat reached (${LIMITS.chatHourly()}). Pause — rapid-fire messaging is what gets numbers banned.`);
-  }
-  if (S.globalHourly.get(hourAgo).c >= LIMITS.globalHourly()) {
-    throw new GateError(`Team-wide hourly send limit reached (${LIMITS.globalHourly()}). Sending is paused to protect the number.`);
-  }
+  // The hourly caps are NOT checked here. They used to refuse the message and
+  // the agent lost what they had typed — a support desk stopped mid-shift by
+  // its own safety rail. They are enforced by the sender instead, which simply
+  // holds the message back until there is room. The wire rate is identical;
+  // only the agent's experience changes.
   // Identical text fanned out across chats is the signature of a broadcast,
   // which is the single fastest way to lose the number. An empty caption is not
   // a duplicate — several photos sent without captions must not trip this.
@@ -100,13 +98,45 @@ export function queueMedia(chatId, caption, userId, { mediaType, mediaPath, repl
 const rand = (a, b) => a + Math.random() * (b - a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** The next queued message allowed onto the wire right now, or null when the
+ *  caps say wait.
+ *
+ *  A chat at its limit is skipped rather than blocking the queue behind it —
+ *  otherwise one busy group would stall every other customer's reply.
+ *  Exported so the rule can be checked without running the loop.
+ */
+export function nextSendable(at = now()) {
+  const hourAgo = at - 3600;
+  if (S.globalSentHourly.get(hourAgo).c >= LIMITS.globalHourly()) return null;
+  const seen = new Map();
+  for (const msg of S.queuedBatch.all()) {
+    if (!seen.has(msg.chat_id)) {
+      seen.set(msg.chat_id, S.chatSentHourly.get(msg.chat_id, hourAgo).c);
+    }
+    if (seen.get(msg.chat_id) < LIMITS.chatHourly()) return msg;
+  }
+  return null;
+}
+
 export async function runSender(bridge, broadcast) {
   S.requeueStuck.run(); // a crash mid-send must not strand a message
   for (;;) {
-    const msg = S.nextQueued.get();
+    // 700ms, as before the caps moved here: when nothing is capped this is
+    // the delay before an agent's reply leaves, and slowing it down would be
+    // a regression everyone would feel for a limit almost nobody hits.
+    const msg = nextSendable();
     if (!msg) { await sleep(700); continue; }
 
-    S.setStatus.run('sending', null, msg.id);
+    // A message can wait longer than the conversation stays open. Sending it
+    // anyway would be the one thing the reply window exists to prevent.
+    const w = windowState(msg.chat_id);
+    if (!w.open) {
+      S.setStatus.run('failed', w.reason, msg.id);
+      broadcast({ type: 'message', message: S.message.get(msg.id) });
+      continue;
+    }
+
+    S.markSending.run(now(), msg.id);
     broadcast({ type: 'message', message: S.message.get(msg.id) });
     try {
       // The customer sees the message exactly as it was typed. Who sent it is

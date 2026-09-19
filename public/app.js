@@ -212,13 +212,19 @@ function messageHits() {
   return '<div class="sec">Messages</div>' + msgHits.map((h) => {
     const c = chats.find((x) => x.id === h.chat_id);
     const who = c ? nameOf(c) : h.chat_id;
-    const text = realBody(h.body) || PREVIEW_LABEL[h.media_type] || '📎 Attachment';
+    // Show whichever of the two actually matched — a shared file is found by
+    // its name, and printing the caption instead would hide the hit.
+    const needle = filter.trim().toLowerCase();
+    const name = h.media_path ? fileLabel(h) : '';
+    const body = realBody(h.body);
+    const text = body && body.toLowerCase().includes(needle) ? body
+      : name || body || PREVIEW_LABEL[h.media_type] || '📎 Attachment';
     return `
       <div class="chat hit" data-hit="${esc(h.id)}" data-chat="${esc(h.chat_id)}" data-ts="${h.ts}">
         ${avatar(h.chat_id, who)}
         <div class="n">${esc(who)}</div>
         <div class="t">${timeOf(h.ts)}</div>
-        <div class="p">${h.from_me ? '↩ ' : ''}${mark(text.slice(0, 120), filter)}</div>
+        <div class="p">${h.from_me ? '↩ ' : ''}${text === name ? '📎 ' : ''}${mark(text.slice(0, 120), needle)}</div>
         <div></div>
       </div>`;
   }).join('');

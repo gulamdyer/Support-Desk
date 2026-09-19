@@ -182,8 +182,15 @@ message passes `src/gate.js` before it reaches the wire:
 | **Reply-only window** | 7 days since their last message | Cold outreach is the #1 ban driver. A contact who never wrote first can never be messaged at all. |
 | Per-chat hourly cap | 15 | Rapid-fire to one person reads as a bot. |
 | Team-wide hourly cap | 120 | Backstop against a runaway loop. |
+| What a cap does | **holds, never refuses** | Over the cap the message is queued and leaves when the hour has room. The wire rate is the cap either way; refusing it just also threw away what the agent had typed. |
 | Duplicate-text guard | same text to 3 chats/24h | Identical bulk text is the broadcast signature that kills numbers. |
 | Paced sender | 1 at a time, typing indicator, 3–8s jitter | An agent clearing 20 chats sends over minutes, not in one burst. |
+
+A chat at its cap is skipped rather than blocking the queue behind it, so one
+busy group never stalls every other customer's reply. A message held so long
+that the reply window closed is failed rather than sent late. Caps are counted
+on when a message reached the wire (`sent_ts`), not when it was typed — under a
+backlog those are different hours.
 
 **There is deliberately no bulk-send endpoint.** When someone asks for "message
 all customers", the honest answer must be that the system cannot do it. That
