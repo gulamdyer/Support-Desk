@@ -178,9 +178,11 @@ function matchesFilters(c) {
   return true;
 }
 
+let msgHits = [], msgHitsFor = '', searchTimer = 0;
+
 function renderChats() {
   const q = filter.toLowerCase();
-  $('chats').innerHTML = chats
+  const rows = chats
     .filter(matchesFilters)
     .filter((c) => !q || nameOf(c).toLowerCase().includes(q) || c.id.includes(q))
     .map((c) => `
@@ -191,18 +193,69 @@ function renderChats() {
         <div class="p">${c.preview_out ? '↩ ' : ''}${esc(previewText(c.preview).slice(0, 60))}</div>
         ${c.unread ? `<div class="badge">${c.unread}</div>` : '<div></div>'}
         ${c.assignee_name ? `<div class="owner">${esc(c.assignee_name)}${c.assigned_to === me.id ? ' (you)' : ''}</div>` : ''}
-      </div>`).join('') || `<div class="list-empty">${
+      </div>`).join('');
+  // Message matches sit under the conversations, the way WhatsApp does it.
+  // When a search finds messages but no chat names, "nothing matched" would be
+  // a lie, so that line only appears when neither found anything.
+  const hits = messageHits();
+  $('chats').innerHTML = (rows || (hits ? '' : `<div class="list-empty">${
     // An empty Unread list is the good outcome, not a failed search.
     category === 'unread' && !filter && dateFrom === null ? 'Nothing unread — the team is caught up.'
       : filter || category !== 'all' || dateFrom !== null ? 'No conversations match these filters.'
-      : 'No conversations yet.'}</div>`;
+      : 'No conversations yet.'}</div>`)) + hits;
+}
+
+/** Conversations whose messages contain what was typed, not just those whose
+ *  name does — a chassis number lives in the text, never in a chat title. */
+function messageHits() {
+  if (msgHitsFor !== filter || !msgHits.length) return '';
+  return '<div class="sec">Messages</div>' + msgHits.map((h) => {
+    const c = chats.find((x) => x.id === h.chat_id);
+    const who = c ? nameOf(c) : h.chat_id;
+    const text = realBody(h.body) || PREVIEW_LABEL[h.media_type] || '📎 Attachment';
+    return `
+      <div class="chat hit" data-hit="${esc(h.id)}" data-chat="${esc(h.chat_id)}" data-ts="${h.ts}">
+        ${avatar(h.chat_id, who)}
+        <div class="n">${esc(who)}</div>
+        <div class="t">${timeOf(h.ts)}</div>
+        <div class="p">${h.from_me ? '↩ ' : ''}${mark(text.slice(0, 120), filter)}</div>
+        <div></div>
+      </div>`;
+  }).join('');
 }
 
 $('chats').onclick = (e) => {
+  const hit = e.target.closest('[data-hit]');
+  if (hit) return openAt(hit.dataset.chat, hit.dataset.hit, Number(hit.dataset.ts));
   const el = e.target.closest('.chat');
   if (el) openChat(el.dataset.id);
 };
-$('search').oninput = (e) => { filter = e.target.value; renderChats(); };
+
+/** A message result: open its conversation around that moment, then ring the
+ *  message — the same landing a tapped quote gets. */
+async function openAt(chatId, msgId, ts) {
+  await openChat(chatId, ts);
+  const row = msgRow(msgId);
+  if (row) row.scrollIntoView({ block: 'center', behavior: 'auto' });
+  ringMessage(msgId);
+}
+// Names filter as you type; message text follows a moment later, because that
+// one is a database query and should not run on every keystroke.
+$('search').oninput = (e) => {
+  filter = e.target.value;
+  renderChats();
+  clearTimeout(searchTimer);
+  const q = filter.trim();
+  if (q.length < 2) { msgHits = []; msgHitsFor = ''; return renderChats(); }
+  searchTimer = setTimeout(async () => {
+    const asked = filter;
+    try {
+      const { hits } = await api(`/api/search?q=${encodeURIComponent(q)}`);
+      msgHits = hits; msgHitsFor = asked;
+    } catch { msgHits = []; msgHitsFor = ''; }
+    renderChats();
+  }, 250);
+};
 
 async function loadChats() {
   chats = (await api('/api/chats')).chats;
@@ -215,12 +268,14 @@ let threadCache = [];
 let findQuery = '', findHits = [], findAt = -1;
 
 // Escape first, then wrap the matches — never the other way round.
-function highlight(text) {
+/** Escape the text, then mark every occurrence of the needle inside it. */
+function mark(text, needle) {
   const safe = esc(text);
-  if (!findQuery) return safe;
-  const needle = esc(findQuery).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return safe.replace(new RegExp(needle, 'gi'), (hit) => `<mark>${hit}</mark>`);
+  if (!needle) return safe;
+  const pattern = esc(needle).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return safe.replace(new RegExp(pattern, 'gi'), (hit) => `<mark>${hit}</mark>`);
 }
+const highlight = (text) => mark(text, findQuery);
 function renderMessages(messages, isGroup) {
   threadCache = messages;
   const box = $('messages');
@@ -1003,10 +1058,15 @@ async function jumpToQuoted(ref, ts) {
   // hundred messages outlasted the ring, so the original landed already faded.
   // A chat busy enough to redraw meanwhile keeps the ring — see renderMessages.
   await scrollSettled($('messages'));
-  ringed = target.id;
+  ringMessage(target.id);
+}
+
+/** Ring a message so the eye finds it; it survives a redraw of the thread. */
+function ringMessage(id) {
+  ringed = id;
   clearTimeout(ringTimer);
   ringTimer = setTimeout(() => { ringed = null; }, 1800);
-  const row = msgRow(target.id);         // the thread may have been redrawn
+  const row = msgRow(id);                // the thread may have been redrawn
   if (!row) return;
   row.classList.remove('quoted');
   void row.offsetWidth;                  // restart the ring on a second tap

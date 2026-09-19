@@ -269,6 +269,14 @@ app.get('/api/chats/:id/search', (req, res) => {
   res.json({ hits: S.searchThread.all(chat.id, q) });
 });
 
+/** The same search across every conversation — what the sidebar box does once
+ *  there is more than a name to go on. */
+app.get('/api/search', (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) return res.status(422).json({ error: 'Type at least two characters.' });
+  res.json({ hits: S.searchAll.all(q) });
+});
+
 /** Blue ticks happen HERE — when a human opened the chat — never on ingest. */
 app.post('/api/chats/:id/read', wrap(async (req, res) => {
   const chat = S.chat.get(req.params.id);

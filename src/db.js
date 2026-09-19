@@ -321,6 +321,12 @@ const S = {
     FROM messages
     WHERE chat_id = ? AND body <> '' AND body LIKE '%' || ? || '%'
     ORDER BY ts DESC, rowid DESC LIMIT 80`),
+  // The same search across every conversation, for the sidebar box. Newest
+  // first: a support desk is nearly always looking for something recent.
+  searchAll: db.prepare(`SELECT id, chat_id, ts, body, from_me, media_type
+    FROM messages
+    WHERE body <> '' AND body LIKE '%' || ? || '%'
+    ORDER BY ts DESC, rowid DESC LIMIT 50`),
   firstMessageTs: db.prepare(`SELECT MIN(ts) AS ts FROM messages WHERE chat_id = ?`),
   message: db.prepare(`SELECT m.*, u.name AS agent_name,
       ct.name AS sender_display, ct.phone AS sender_phone,
