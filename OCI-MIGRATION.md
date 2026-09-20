@@ -277,16 +277,44 @@ Run the checklist again. **Rollback is one command:** `mv data/media.bak data/me
 
 ### 9. Soak, then reclaim
 
-Leave it renamed for an hour if space is tight, a day if it isn't. Then:
+Leave it renamed for an hour if space is tight, a day if it isn't. Then measure
+before, delete, and measure again — never assume the command worked:
 
 ```bash
-rm -rf data/media.bak
+df -h "$(dirname "$MEDIA_ROOT")"                    # before
+
+rm -rf "${MEDIA_ROOT:?MEDIA_ROOT is not set}.bak"
+
+df -h "$(dirname "$MEDIA_ROOT")"                    # after: free space must jump
 ```
+
+The `:?` earns its place. With `MEDIA_ROOT` unset — a fresh shell, a reconnected
+session — `rm -rf "${MEDIA_ROOT}.bak"` expands to `rm -rf ".bak"`, matches
+nothing, exits 0, and reclaims nothing while looking like success. `:?` aborts
+instead. Note also that there is no `data/media.bak` beside the app: the files
+live in the Docker volume, which is why every command here goes through
+`$MEDIA_ROOT`.
+
+The storage panel reads free space fresh on every open, so it agrees
+immediately. If it still shows the old figure, the bytes really are still on
+the disk — it is not a stale reading.
 
 Object count should match what you noted in step 4:
 
 ```bash
-oci os object list -bn wa-media --all --auth instance_principal | grep -c '"name"'
+python3 - <<'EOF'
+import os, json, urllib.parse, urllib.request
+par = os.environ["MEDIA_PAR"]
+if not par.endswith("/"): par += "/"
+total, start = 0, ""
+while True:
+    u = par + "?fields=name&limit=1000" + ("&start=" + urllib.parse.quote(start) if start else "")
+    page = json.load(urllib.request.urlopen(u))
+    total += len(page.get("objects", []))
+    start = page.get("nextStartWith")
+    if not start: break
+print("objects in bucket:", total)
+EOF
 ```
 
 ---
