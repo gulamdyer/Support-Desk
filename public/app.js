@@ -2034,13 +2034,23 @@ $('storage').onclick = async () => {
   } catch (err) { $('storageBody').innerHTML = `<p class="err">${esc(err.message)}</p>`; }
 };
 // --- admin: backups -------------------------------------------------------
-// Admins see that backups are happening. Only the owner can take one off the
-// server or put one back.
-const backupWhen = (iso) => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return Number.isNaN(+d) ? '' : d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+// A night's backup, not a pair of files. The database and the session archive
+// are two halves of one thing to whoever is reading this, and what they are
+// called on disk is ours to know. Admins see that backups are happening; only
+// the owner can take one off the server or put one back.
+const backupDay = (d) => {
+  const t = new Date(`${d}T00:00:00`);
+  return Number.isNaN(+t) ? d : t.toLocaleDateString([], { dateStyle: 'long' });
 };
+const backupTime = (iso) => {
+  const t = iso ? new Date(iso) : null;
+  return t && !Number.isNaN(+t) ? t.toLocaleTimeString([], { timeStyle: 'short' }) : '';
+};
+// Said plainly, because "chats only" is the difference between coming back up
+// and coming back up unlinked.
+const backupState = (b) => (b.chats && b.session ? 'Chats and session'
+  : b.chats ? 'Chats only — session not included'
+  : 'Session only — no chat history');
 
 function backupRows(d) {
   if (d.store !== 'oci') {
@@ -2048,24 +2058,23 @@ function backupRows(d) {
       on the same volume they are meant to protect. Set <code>MEDIA_STORE=oci</code> to send them off the box.</p>`;
   }
   if (!d.backups.length) {
-    return `<p class="hint warn-hint">No backups in the bucket yet. If the nightly task is configured,
+    return `<p class="hint warn-hint">No backups yet. If the nightly task is configured,
       the first one appears after it next runs.</p>`;
   }
-  const newest = d.backups[0];
-  const stale = newest.at && (Date.now() - new Date(newest.at)) > 48 * 3600e3;
+  const stale = d.backups[0].at && (Date.now() - new Date(d.backups[0].at)) > 48 * 3600e3;
   return `
     ${stale ? `<p class="hint warn-hint" style="margin-bottom:14px">The newest backup is more than two days old —
       the scheduled task may have stopped running.</p>` : ''}
     <div class="store-rows">
       ${d.backups.map((b) => `
         <div class="store-row">
-          <span>${esc(b.name)}${b.at ? `<br><span class="hint">${esc(backupWhen(b.at))}</span>` : ''}</span>
+          <span><strong>${esc(backupDay(b.date))}</strong><br>
+            <span class="hint">${b.at ? `${esc(backupTime(b.at))} · ` : ''}${esc(backupState(b))}</span></span>
           <span>
-            ${mb(b.size)}
-            ${d.canRestore ? `
-              <button class="linkish owner-only" data-dl-backup="${esc(b.name)}">Download</button>
-              ${b.name.endsWith('.db') ? `<button class="linkish danger owner-only" data-restore="${esc(b.name)}">Restore</button>` : ''}
-            ` : ''}
+            ${mb(b.bytes)}
+            ${d.canRestore && b.chats ? `
+              <button class="linkish" data-dl="${esc(b.date)}">Download</button>
+              <button class="linkish danger" data-restore="${esc(b.date)}">Restore</button>` : ''}
           </span>
         </div>`).join('')}
     </div>
@@ -2082,40 +2091,42 @@ $('backups').onclick = async () => {
 };
 
 $('backupBody').onclick = async (e) => {
-  const dl = e.target.closest('[data-dl-backup]');
+  const dl = e.target.closest('[data-dl]');
   if (dl) {
     const a = document.createElement('a');
-    a.href = `/api/admin/backups/${encodeURIComponent(dl.dataset.dlBackup)}/download`;
-    a.download = dl.dataset.dlBackup;
+    a.href = `/api/admin/backups/${encodeURIComponent(dl.dataset.dl)}/download`;
+    a.download = `chat-backup-${dl.dataset.dl}.db`;
     a.click();
     return;
   }
+
   const go = e.target.closest('[data-restore-go]');
   if (go) {
-    const name = go.dataset.restoreGo;
-    const typed = $('restoreConfirm')?.value.trim() || '';
+    const date = go.dataset.restoreGo;
     // The date has to be typed out. This replaces every conversation in the app
     // with an older copy, and nothing inside the app can undo it.
-    if (!name.includes(typed)) return toast('That did not match the backup date — nothing was changed.');
+    if (($('restoreConfirm')?.value || '').trim() !== date) {
+      return toast('That did not match the backup date — nothing was changed.');
+    }
     try {
       // api() infers POST from having a body, so it needs one.
-      await api(`/api/admin/backups/${encodeURIComponent(name)}/restore`, { confirm: typed });
-      $('backupBody').innerHTML = `<p class="hint">Restoring from ${esc(name)}. The app is restarting — reload in a few seconds.</p>`;
+      await api(`/api/admin/backups/${encodeURIComponent(date)}/restore`, { confirm: date });
+      $('backupBody').innerHTML = `<p class="hint">Restoring the backup from ${esc(backupDay(date))}.
+        The app is restarting — reload in a few seconds.</p>`;
     } catch (err) { toast(err.message); }
     return;
   }
 
   const r = e.target.closest('[data-restore]');
   if (!r) return;
-  const name = r.dataset.restore;
-  const date = (name.match(/\d{4}-\d{2}-\d{2}/) || [''])[0];
+  const date = r.dataset.restore;
   r.closest('.store-row').insertAdjacentHTML('afterend', `
     <div class="store-row restore-ask">
-      <span class="hint">Replaces <strong>every</strong> conversation with the copy from ${esc(date)}.
-        Type that date to confirm.</span>
+      <span class="hint">Replaces <strong>every</strong> conversation with the copy from
+        ${esc(backupDay(date))}. Type <strong>${esc(date)}</strong> to confirm.</span>
       <span>
         <input id="restoreConfirm" placeholder="YYYY-MM-DD" autocomplete="off" size="11">
-        <button class="linkish danger" data-restore-go="${esc(name)}">Restore</button>
+        <button class="linkish danger" data-restore-go="${esc(date)}">Restore</button>
       </span>
     </div>`);
   r.remove();

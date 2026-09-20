@@ -495,16 +495,33 @@ app.get('/api/admin/storage', requireAdmin, wrap(async (req, res) => res.json(aw
 // history with an older copy, stays with the owner.
 app.get('/api/admin/backups', requireAdmin, wrap(async (req, res) => {
   if (!isOci()) return res.json({ store: 'disk', backups: [] });
-  const backups = (await listObjects(BACKUP_PREFIX))
-    .map((o) => ({ name: o.name.slice(BACKUP_PREFIX.length), size: o.size || 0, at: o.timeCreated || null }))
-    // Names are inbox-YYYY-MM-DD, so sorting them is sorting by date — and it
-    // still holds if the bucket omits timeCreated.
-    .sort((a, b) => b.name.localeCompare(a.name));
+  // One row per night, not per file. The database and the session archive are
+  // two halves of one backup to the person reading this, and what they are
+  // called on disk is our business, not theirs. Anything not matching the
+  // pattern — a stray test object, say — never reaches the screen.
+  const byDate = new Map();
+  for (const o of await listObjects(BACKUP_PREFIX)) {
+    const m = o.name.slice(BACKUP_PREFIX.length).match(/^(inbox|auth_state)-(\d{4}-\d{2}-\d{2})\./);
+    if (!m) continue;
+    const [, kind, date] = m;
+    const row = byDate.get(date) || { date, bytes: 0, at: null, chats: false, session: false };
+    row.bytes += o.size || 0;
+    if (o.timeCreated && (!row.at || o.timeCreated > row.at)) row.at = o.timeCreated;
+    row[kind === 'inbox' ? 'chats' : 'session'] = true;
+    byDate.set(date, row);
+  }
+  const backups = [...byDate.values()].sort((a, b) => b.date.localeCompare(a.date));
   res.json({ store: 'oci', backups, canRestore: !!req.user.is_owner });
 }));
 
-app.get('/api/admin/backups/:name/download', requireOwner, wrap(async (req, res) => {
-  const name = path.basename(String(req.params.name)); // basename: no climbing out of the prefix
+// Addressed by date, never by filename. The browser never learns what these
+// objects are called, and there is no user-supplied path left to sanitise.
+const backupDate = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? String(v) : null);
+
+app.get('/api/admin/backups/:date/download', requireOwner, wrap(async (req, res) => {
+  const date = backupDate(req.params.date);
+  if (!date) return res.status(422).json({ error: 'Not a backup date.' });
+  const name = `inbox-${date}.db`;
   const buf = await getObject(BACKUP_PREFIX + name);
   if (!buf) return res.status(404).json({ error: 'That backup is no longer in the bucket.' });
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -516,26 +533,22 @@ app.get('/api/admin/backups/:name/download', requireOwner, wrap(async (req, res)
 /** Stage a backup and stop. The swap happens in db.js on the way back up,
  *  because writing over the database file while a connection is open to it
  *  corrupts it — there is no safe way to do this in place. */
-app.post('/api/admin/backups/:name/restore', requireOwner, wrap(async (req, res) => {
-  const name = path.basename(String(req.params.name));
-  if (!name.startsWith('inbox-') || !name.endsWith('.db')) {
-    return res.status(422).json({
-      error: 'Only a database backup can be restored here. The WhatsApp session archive is unpacked by hand.',
-    });
-  }
+app.post('/api/admin/backups/:date/restore', requireOwner, wrap(async (req, res) => {
+  const date = backupDate(req.params.date);
+  if (!date) return res.status(422).json({ error: 'Not a backup date.' });
   // The typed date has to come back with the request. The UI asks for it, but
   // the check belongs here as well: this route replaces every conversation in
   // the app, and a bare POST to the URL should not be enough to set that off.
-  const confirm = String(req.body?.confirm || '').trim();
-  if (!confirm || !name.includes(confirm)) {
-    return res.status(422).json({ error: 'Confirm by sending the backup date exactly as it appears in the name.' });
+  if (String(req.body?.confirm || '').trim() !== date) {
+    return res.status(422).json({ error: 'Confirm by sending the backup date.' });
   }
+  const name = `inbox-${date}.db`;
 
   const buf = await getObject(BACKUP_PREFIX + name);
   if (!buf) return res.status(404).json({ error: 'That backup is no longer in the bucket.' });
 
   writeFileSync(`${DB_FILE}.restore`, buf);
-  logWa('backup_restored', name, req.user.id);
+  logWa('backup_restored', date, req.user.id);
   res.json({ ok: true, name });
 
   // Answer first, then go down so the restart picks the staged copy up. A crash
