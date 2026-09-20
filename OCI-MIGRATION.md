@@ -309,6 +309,35 @@ One per chokepoint — anything less isn't a real test.
 If the bridge can't read a file back, `MEDIA_PAR` is almost certainly missing on
 the **bridge** service.
 
+### Proving it is really the bucket
+
+The page will show `<img src="/media/img_….jpg">` in both modes. That is **by
+design, not evidence of the disk**: the bucket URL and the PAR never reach the
+browser, because a PAR is a bearer token and anyone holding it could read the
+whole bucket. Seeing an `objectstorage…` URL in the DOM would be the bug.
+
+So the browser cannot tell you which backend served a file. Two things can:
+
+**Conclusive — the directory is gone.** After step 8 there is no
+`/app/data/media` in the container, so anything that still renders came from
+the bucket:
+
+```bash
+docker exec <inbox-container> ls -la /app/data/
+```
+
+**Spot-check — compare ETags.** Ask the bucket directly, server-side, so
+nothing is exposed:
+
+```bash
+curl -sI "${MEDIA_PAR}<object-name>" | grep -i etag
+```
+
+Match it against the `ETag` in DevTools → Network → that image → Response
+Headers. Identical means the browser's bytes came from Dubai. The shape gives
+it away on its own: `res.sendFile` emits a **weak** validator (`W/"b-1a0be…"`,
+size and mtime), while Object Storage returns a **strong** one with no `W/`.
+
 ---
 
 ## Rollback
