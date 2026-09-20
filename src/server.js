@@ -615,7 +615,11 @@ app.get('/media/:file', requireAuth, wrap(async (req, res) => {
   // is the cheaper read. In OCI mode it was never written here at all, so this
   // falls through to the bucket.
   const local = existsSync(file);
-  const upstream = local ? null : await openMedia(name, req.headers.range);
+  const upstream = local ? null : await openMedia(name, {
+    range: req.headers.range,
+    'if-none-match': req.headers['if-none-match'],
+    'if-modified-since': req.headers['if-modified-since'],
+  });
   if (!local && !upstream) return res.status(404).end();
   // These files came off the wire (or off an agent's disk). Only ever render the
   // types we recognise inline; everything else downloads, so an uploaded .html
@@ -636,7 +640,18 @@ app.get('/media/:file', requireAuth, wrap(async (req, res) => {
   if (!inlinePdf && ('download' in req.query || kindOf(ext) === 'document')) {
     res.setHeader('Content-Disposition', `attachment; filename="${name.replace(/"/g, '')}"`);
   }
-  if (local) return res.sendFile(file);
+  // An attachment never changes: its name carries random bytes, the file is
+  // never rewritten, and rotation lives in the DB rather than in the pixels. So
+  // the browser may keep it for good — reopening a thread should cost no
+  // requests at all. Private, because these are answered only to a signed-in
+  // agent and must never sit in a shared proxy.
+  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+  // cacheControl:false so send() does not overwrite that with its own default.
+  if (local) return res.sendFile(file, { cacheControl: false });
+
+  // Nothing changed since the browser last asked: no body, no bytes off the
+  // bucket. Without this every revisit re-downloads the whole attachment.
+  if (upstream.status === 304) return res.status(304).end();
 
   // From the bucket. Range has to survive in both directions or video seeking
   // breaks: the request carried it up, and 206/Content-Range come back down.

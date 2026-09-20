@@ -56,14 +56,29 @@ assert.ok(!existsSync('/app/data/media/scan 1.pdf'), 'OCI mode must not touch th
 assert.equal((await oci.loadMedia('img_1.jpg')).toString(), 'bytes');
 assert.equal(calls.at(-1)[1], 'GET');
 
-await oci.openMedia('vid_1.mp4', 'bytes=0-99');
-assert.deepEqual(calls.at(-1)[2], { range: 'bytes=0-99' }, 'Range must reach the bucket or seeking breaks');
+// Range keeps seeking working; the validators let the bucket answer 304 instead
+// of resending an attachment the browser already has. Empty ones are dropped.
+await oci.openMedia('vid_1.mp4', {
+  range: 'bytes=0-99', 'if-none-match': '"abc"', 'if-modified-since': undefined,
+});
+assert.deepEqual(calls.at(-1)[2], { range: 'bytes=0-99', 'if-none-match': '"abc"' },
+  'Range and cache validators must reach the bucket');
 
 await oci.removeMedia('/app/data/media/img_1.jpg');
 assert.equal(calls.at(-1)[1], 'DELETE');
 
 // Pagination: both pages counted, not just the first.
 assert.deepEqual(await oci.ociUsage(), { bytes: 35, files: 3 });
+
+// 304 is not "missing". It sits outside the 2xx range, so a naive res.ok check
+// turns every revalidation into a 404 and the browser re-downloads everything.
+globalThis.fetch = async (u, init = {}) => ({
+  ok: false,
+  status: init.headers?.["if-none-match"] ? 304 : 404,
+});
+assert.equal((await oci.openMedia("img_1.jpg", { "if-none-match": "\"x\"" }))?.status, 304,
+  "a 304 must come back so the route can pass it through");
+assert.equal(await oci.openMedia("gone.jpg"), null, "a real miss must still be null");
 
 // A bucket that refuses to list must say so rather than report zero — that
 // number is what a client gets billed against.

@@ -72,12 +72,19 @@ export async function loadMedia(name) {
   return Buffer.from(await res.arrayBuffer());
 }
 
-/** Streamed read for GET /media/:file, Range header and all, so video seeking
- *  keeps working. Returns the upstream Response, or null when absent. */
-export async function openMedia(name, range) {
+/** Streamed read for GET /media/:file. `headers` are forwarded verbatim, so
+ *  Range keeps video seeking working and the cache validators let the bucket
+ *  answer 304 instead of resending bytes the browser already has. Returns the
+ *  upstream Response, or null when genuinely absent.
+ *
+ *  304 is explicitly allowed through: it sits outside the 2xx range, so
+ *  res.ok is false for it, and treating that as "missing" would turn every
+ *  revalidation into a 404. */
+export async function openMedia(name, headers = {}) {
   if (!isOci()) return null;
-  const res = await call(name, range ? { headers: { range } } : undefined);
-  if (!res.ok) return null;
+  const send = Object.fromEntries(Object.entries(headers).filter(([, v]) => v));
+  const res = await call(name, Object.keys(send).length ? { headers: send } : undefined);
+  if (!res.ok && res.status !== 304) return null;
   return res;
 }
 
