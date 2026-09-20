@@ -1971,6 +1971,58 @@ $('applyRange').onclick = runReport;
 // on, with the two things actually consuming it broken out.
 const gb = (n) => `${(n / 1073741824).toFixed(n < 1073741824 ? 2 : 1)} GB`;
 const mb = (n) => (n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(0)} MB`);
+// An allocation reads better in TB; the leading + drops the trailing zeros, so
+// a terabyte is "1 TB" rather than "1.00 TB".
+const big = (n) => (n >= 1099511627776 ? `${+(n / 1099511627776).toFixed(2)} TB` : gb(n));
+// 9 GB of a terabyte rounds to 0%, which reads as "nothing stored". Keep one
+// decimal until there is enough to show a whole number.
+const pctOf = (a, b) => (b ? (a / b >= 0.1 ? Math.round((a / b) * 100) : +((a / b) * 100).toFixed(1)) : 0);
+const barLevel = (p) => (p >= 90 ? 'crit' : p >= 75 ? 'warn' : '');
+const bar = (pct, sub) => `
+  <div class="store-head">
+    <span class="store-pct">${pct}%</span>
+    <span class="hint">${sub}</span>
+  </div>
+  <div class="store-bar ${barLevel(pct)}"><i style="width:${Math.min(100, pct)}%"></i></div>`;
+
+// Attachments on the data volume: one disk, everything on it.
+function diskView(d) {
+  const pct = d.total ? Math.round((d.used / d.total) * 100) : 0;
+  return `
+    ${bar(pct, `${gb(d.used)} of ${gb(d.total)} used · ${gb(d.free)} free`)}
+    <div class="store-rows">
+      <div class="store-row"><span>Attachments</span><span>${mb(d.mediaBytes)} · ${d.mediaFiles.toLocaleString()} files</span></div>
+      <div class="store-row"><span>Conversation database</span><span>${mb(d.dbBytes)}</span></div>
+      <div class="store-row"><span>Everything else on the disk</span><span>${gb(Math.max(0, d.used - d.mediaBytes - d.dbBytes))}</span></div>
+    </div>
+    ${barLevel(pct) ? `<p class="hint warn-hint" style="margin-top:14px">${pct >= 90
+      ? 'Almost full. Attachments are never deleted — free space or add a retention rule now.'
+      : 'Filling up. Attachments are never deleted, so this only grows.'}</p>` : ''}`;
+}
+
+// Attachments in the bucket: two separate things to account for, and the
+// allocation leads because that is the number the client is billed against.
+function cloudView(d) {
+  const pct = pctOf(d.mediaBytes, d.quotaBytes);
+  const diskPct = d.total ? Math.round((d.used / d.total) * 100) : 0;
+  return `
+    <div class="store-sec"><span>Cloud storage · OCI Dubai</span></div>
+    ${d.quotaBytes
+      ? bar(pct, `${big(d.mediaBytes)} of ${big(d.quotaBytes)} allocated · ${big(Math.max(0, d.quotaBytes - d.mediaBytes))} free`)
+      : `<p class="hint">${big(d.mediaBytes)} stored · no allocation set</p>`}
+    <div class="store-rows">
+      <div class="store-row"><span>Attachments</span><span>${d.mediaError
+        ? '<span class="err">unavailable</span>'
+        : `${mb(d.mediaBytes)} · ${d.mediaFiles.toLocaleString()} files`}</span></div>
+    </div>
+    ${d.mediaError ? `<p class="hint warn-hint" style="margin-top:14px">Could not read the bucket: ${esc(d.mediaError)}</p>` : ''}
+    <div class="store-sec"><span>Server disk</span><span>${gb(d.used)} of ${gb(d.total)}</span></div>
+    <div class="store-bar ${barLevel(diskPct)}"><i style="width:${Math.min(100, diskPct)}%"></i></div>
+    <div class="store-rows">
+      <div class="store-row"><span>Conversation database</span><span>${mb(d.dbBytes)}</span></div>
+      <div class="store-row"><span>Everything else on the disk</span><span>${gb(Math.max(0, d.used - d.dbBytes))}</span></div>
+    </div>`;
+}
 
 $('storage').onclick = async () => {
   closeMenu();
@@ -1978,22 +2030,7 @@ $('storage').onclick = async () => {
   $('storageBody').innerHTML = '<p class="hint">Reading…</p>';
   try {
     const d = await api('/api/admin/storage');
-    const pct = d.total ? Math.round((d.used / d.total) * 100) : 0;
-    const level = pct >= 90 ? 'crit' : pct >= 75 ? 'warn' : '';
-    $('storageBody').innerHTML = `
-      <div class="store-head">
-        <span class="store-pct">${pct}%</span>
-        <span class="hint">${gb(d.used)} of ${gb(d.total)} used · ${gb(d.free)} free</span>
-      </div>
-      <div class="store-bar ${level}"><i style="width:${Math.min(100, pct)}%"></i></div>
-      <div class="store-rows">
-        <div class="store-row"><span>Attachments</span><span>${mb(d.mediaBytes)} · ${d.mediaFiles.toLocaleString()} files</span></div>
-        <div class="store-row"><span>Conversation database</span><span>${mb(d.dbBytes)}</span></div>
-        <div class="store-row"><span>Everything else on the disk</span><span>${gb(Math.max(0, d.used - d.mediaBytes - d.dbBytes))}</span></div>
-      </div>
-      ${level ? `<p class="hint warn-hint" style="margin-top:14px">${pct >= 90
-        ? 'Almost full. Attachments are never deleted — free space or add a retention rule now.'
-        : 'Filling up. Attachments are never deleted, so this only grows.'}</p>` : ''}`;
+    $('storageBody').innerHTML = d.store === 'oci' ? cloudView(d) : diskView(d);
   } catch (err) { $('storageBody').innerHTML = `<p class="err">${esc(err.message)}</p>`; }
 };
 const closeStorage = () => { $('storageModal').hidden = true; };

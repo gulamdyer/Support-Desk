@@ -300,6 +300,10 @@ button { font: inherit; cursor: pointer; }
 .store-row { display: flex; justify-content: space-between; gap: 12px;
   padding: 10px 12px; background: var(--panel); font-size: 13.5px; }
 .store-row span:last-child { font-variant-numeric: tabular-nums; color: var(--muted); }
+.store-sec { display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  margin: 22px 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--muted); }
+.store-sec:first-child { margin-top: 0; }
 
 /* --- image viewer --- */
 .img-sheet { width: min(96vw, 1200px); height: min(92vh, 1000px);

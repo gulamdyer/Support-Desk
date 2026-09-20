@@ -33,6 +33,7 @@ import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import path from 'path';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from 'fs';
+import { saveMedia, loadMedia } from '../src/media-store.js';
 import { randomBytes } from 'crypto';
 import qrcode from 'qrcode-terminal';
 import QRCode from 'qrcode';
@@ -630,10 +631,7 @@ async function openSocket() {
           const mime = messageContent.imageMessage.mimetype || 'image/jpeg';
           const extMap = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif' };
           const ext = extMap[mime] || '.jpg';
-          mkdirSync(MEDIA_DIR, { recursive: true });
-          const filePath = path.join(MEDIA_DIR, `img_${randomBytes(6).toString('hex')}${ext}`);
-          writeFileSync(filePath, buf);
-          mediaUrls.push(filePath);
+          mediaUrls.push(await saveMedia(path.join(MEDIA_DIR, `img_${randomBytes(6).toString('hex')}${ext}`), buf));
         } catch (err) {
           console.error('[bridge] Failed to download image:', err.message);
         }
@@ -645,10 +643,7 @@ async function openSocket() {
           const buf = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
           const mime = messageContent.videoMessage.mimetype || 'video/mp4';
           const ext = mime.includes('mp4') ? '.mp4' : '.mkv';
-          mkdirSync(MEDIA_DIR, { recursive: true });
-          const filePath = path.join(MEDIA_DIR, `vid_${randomBytes(6).toString('hex')}${ext}`);
-          writeFileSync(filePath, buf);
-          mediaUrls.push(filePath);
+          mediaUrls.push(await saveMedia(path.join(MEDIA_DIR, `vid_${randomBytes(6).toString('hex')}${ext}`), buf));
         } catch (err) {
           console.error('[bridge] Failed to download video:', err.message);
         }
@@ -660,10 +655,7 @@ async function openSocket() {
           const buf = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
           const mime = audioMsg.mimetype || 'audio/ogg';
           const ext = mime.includes('ogg') ? '.ogg' : mime.includes('mp4') ? '.m4a' : '.ogg';
-          mkdirSync(MEDIA_DIR, { recursive: true });
-          const filePath = path.join(MEDIA_DIR, `aud_${randomBytes(6).toString('hex')}${ext}`);
-          writeFileSync(filePath, buf);
-          mediaUrls.push(filePath);
+          mediaUrls.push(await saveMedia(path.join(MEDIA_DIR, `aud_${randomBytes(6).toString('hex')}${ext}`), buf));
         } catch (err) {
           console.error('[bridge] Failed to download audio:', err.message);
         }
@@ -674,11 +666,8 @@ async function openSocket() {
         const fileName = messageContent.documentMessage.fileName || 'document';
         try {
           const buf = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
-          mkdirSync(MEDIA_DIR, { recursive: true });
           const safeFileName = path.basename(fileName).replace(/[^a-zA-Z0-9._-]/g, '_');
-          const filePath = path.join(MEDIA_DIR, `doc_${randomBytes(6).toString('hex')}_${safeFileName}`);
-          writeFileSync(filePath, buf);
-          mediaUrls.push(filePath);
+          mediaUrls.push(await saveMedia(path.join(MEDIA_DIR, `doc_${randomBytes(6).toString('hex')}_${safeFileName}`), buf));
         } catch (err) {
           console.error('[bridge] Failed to download document:', err.message);
         }
@@ -835,11 +824,15 @@ app.post('/send-media', async (req, res) => {
   }
 
   try {
-    if (!existsSync(filePath)) {
+    // Disk mode: the file is on the shared volume, where it has always been.
+    // OCI mode: it was never written locally, so fetch the bytes back out of
+    // the bucket by name.
+    const buffer = existsSync(filePath)
+      ? readFileSync(filePath)
+      : await loadMedia(path.basename(filePath));
+    if (!buffer) {
       return res.status(404).json({ error: `File not found: ${filePath}` });
     }
-
-    const buffer = readFileSync(filePath);
     const ext = filePath.toLowerCase().split('.').pop();
     const type = mediaType || inferMediaType(ext);
     let msgPayload;

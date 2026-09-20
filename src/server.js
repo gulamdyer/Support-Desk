@@ -1,11 +1,13 @@
 /** Shared WhatsApp inbox — HTTP server, ingest loop and SSE fan-out. */
 import express from 'express';
 import path from 'node:path';
-import { existsSync, writeFileSync, mkdirSync, unlinkSync, statSync, statfsSync, readdirSync } from 'node:fs';
+import { existsSync, statSync, statfsSync, readdirSync } from 'node:fs';
+import { Readable } from 'node:stream';
 import { randomBytes } from 'node:crypto';
 import S, { recordInbound, now, db, contactChanged } from './db.js';
 import { login, logout, requireAuth, requireAdmin, hashPassword, seedAdmin, publicUser, LoginError } from './auth.js';
 import { queueReply, queueMedia, windowState, checkOutbound, runSender, GateError } from './gate.js';
+import { isOci, quotaBytes, saveMedia, openMedia, removeMedia, ociUsage } from './media-store.js';
 
 // Same reasoning as the bridge: an async stream error (a media fetch dying
 // mid-flight) is emitted where no try/catch can see it, and would otherwise
@@ -435,8 +437,10 @@ app.get('/api/admin/whatsapp/history', requireAdmin, (req, res) =>
 // directory is cheap now and gets less so, hence the short cache: this is a
 // panel someone opens, not something on a hot path.
 let storageCache = { at: 0, data: null };
-function storageUsage() {
-  if (Date.now() - storageCache.at < 60_000) return storageCache.data;
+async function storageUsage() {
+  // Listing a bucket is ~31 requests at current volume, so it earns a longer
+  // cache than walking a local directory ever needed.
+  if (Date.now() - storageCache.at < (isOci() ? 600_000 : 60_000)) return storageCache.data;
 
   const fsStat = statfsSync(path.resolve('data'));
   const total = fsStat.blocks * fsStat.bsize;
@@ -444,24 +448,37 @@ function storageUsage() {
 
   let mediaBytes = 0;
   let mediaFiles = 0;
-  try {
-    for (const f of readdirSync(MEDIA_DIR)) {
-      try { mediaBytes += statSync(path.join(MEDIA_DIR, f)).size; mediaFiles += 1; } catch {}
-    }
-  } catch { /* no media yet */ }
+  let mediaError = null;
+  if (isOci()) {
+    // This panel is the number a client gets billed against, so it totals what
+    // the bucket actually holds rather than a counter we keep and hope stays
+    // true. A failure has to say so — reporting 0 would read as "nothing
+    // stored", which is the one wrong answer that looks plausible.
+    try { ({ bytes: mediaBytes, files: mediaFiles } = await ociUsage()); }
+    catch (err) { mediaError = err.message; }
+  } else {
+    try {
+      for (const f of readdirSync(MEDIA_DIR)) {
+        try { mediaBytes += statSync(path.join(MEDIA_DIR, f)).size; mediaFiles += 1; } catch {}
+      }
+    } catch { /* no media yet */ }
+  }
 
   const sizeOf = (p) => { try { return statSync(p).size; } catch { return 0; } };
   const dbBytes = ['inbox.db', 'inbox.db-wal', 'inbox.db-shm']
     .reduce((n, f) => n + sizeOf(path.resolve('data', f)), 0);
 
   storageCache = {
-    at: Date.now(),
-    data: { total, free, used: total - free, mediaBytes, mediaFiles, dbBytes },
+    // Don't cache a failure — otherwise fixing the PAR means waiting 10 minutes
+    // to see that it worked.
+    at: mediaError ? 0 : Date.now(),
+    data: { total, free, used: total - free, mediaBytes, mediaFiles, dbBytes,
+      store: isOci() ? 'oci' : 'disk', quotaBytes: quotaBytes(), mediaError },
   };
   return storageCache.data;
 }
 
-app.get('/api/admin/storage', requireAdmin, (req, res) => res.json(storageUsage()));
+app.get('/api/admin/storage', requireAdmin, wrap(async (req, res) => res.json(await storageUsage())));
 
 // Importing the address book is a deliberate choice, made once per linked
 // phone. Neither route touches pairing.
@@ -499,9 +516,7 @@ app.post('/api/chats/:id/media', wrap(async (req, res) => {
     return res.status(413).json({ error: `File is too large (max ${MAX_UPLOAD_MB} MB).` });
   }
 
-  mkdirSync(MEDIA_DIR, { recursive: true });
-  const stored = path.join(MEDIA_DIR, `${randomBytes(4).toString('hex')}-${safeName}`);
-  writeFileSync(stored, buf);
+  const stored = await saveMedia(path.join(MEDIA_DIR, `${randomBytes(4).toString('hex')}-${safeName}`), buf);
 
   try {
     const msg = queueMedia(chat.id, req.body?.caption, req.user.id, {
@@ -512,7 +527,7 @@ app.post('/api/chats/:id/media', wrap(async (req, res) => {
     broadcast({ type: 'chats' });
     res.json({ message: msg });
   } catch (err) {
-    unlinkSync(stored); // rejected by the gate — do not leave the file behind
+    await removeMedia(stored); // rejected by the gate — do not leave the file behind
     if (err instanceof GateError) return res.status(422).json({ error: err.message });
     throw err;
   }
@@ -586,10 +601,15 @@ app.get('/api/stream', (req, res) => {
   req.on('close', () => { clearInterval(ping); clients.delete(res); });
 });
 
-app.get('/media/:file', requireAuth, (req, res) => {
+app.get('/media/:file', requireAuth, wrap(async (req, res) => {
   const name = path.basename(req.params.file); // basename: no traversal
   const file = path.join(MEDIA_DIR, name);
-  if (!existsSync(file)) return res.status(404).end();
+  // Disk first: mid-migration a file can be in both places, and the local copy
+  // is the cheaper read. In OCI mode it was never written here at all, so this
+  // falls through to the bucket.
+  const local = existsSync(file);
+  const upstream = local ? null : await openMedia(name, req.headers.range);
+  if (!local && !upstream) return res.status(404).end();
   // These files came off the wire (or off an agent's disk). Only ever render the
   // types we recognise inline; everything else downloads, so an uploaded .html
   // can't execute as same-origin script against the inbox.
@@ -609,8 +629,21 @@ app.get('/media/:file', requireAuth, (req, res) => {
   if (!inlinePdf && ('download' in req.query || kindOf(ext) === 'document')) {
     res.setHeader('Content-Disposition', `attachment; filename="${name.replace(/"/g, '')}"`);
   }
-  res.sendFile(file);
-});
+  if (local) return res.sendFile(file);
+
+  // From the bucket. Range has to survive in both directions or video seeking
+  // breaks: the request carried it up, and 206/Content-Range come back down.
+  // Type is still stated from the extension rather than trusting the bucket.
+  if (!inlinePdf) res.type(kindOf(ext) === 'document' ? 'application/octet-stream' : ext);
+  for (const h of ['content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified']) {
+    const v = upstream.headers.get(h);
+    if (v) res.setHeader(h, v);
+  }
+  res.status(upstream.status);
+  Readable.fromWeb(upstream.body)
+    .on('error', (err) => { console.error('media stream:', err?.message || err); res.destroy(); })
+    .pipe(res);
+}));
 
 // Last resort: the UI only ever parses JSON, so errors must be JSON too.
 app.use((err, req, res, next) => {

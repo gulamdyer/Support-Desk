@@ -227,6 +227,14 @@ previewed inline. Stored files are served only to signed-in agents, with
 `nosniff`, and anything that isn't a known media type downloads instead of
 rendering — an uploaded `.html` must never execute as script against the inbox.
 
+Attachments live on the data volume by default. `MEDIA_STORE=oci` puts them in
+an OCI Object Storage bucket instead — same app, same URLs, same auth, and the
+bytes proxied through the inbox rather than handed to the browser as a
+pre-authenticated link. Switching back is that one variable. See
+[OCI-MIGRATION.md](OCI-MIGRATION.md) for the bucket setup and the cutover
+runbook; set the variables on **both** services, since the bridge writes
+incoming attachments and reads them back to send.
+
 ### What the bridge does *not* do (so the phone stays usable)
 
 - `markOnlineOnConnect: false` — the phone keeps its push notifications, and the
@@ -379,6 +387,7 @@ The UI is built around the four ways a shared inbox goes wrong:
 | `bridge/bridge.js` | Baileys client in mirror mode (from the Deone project, retuned) |
 | `src/db.js` | Schema + queries. `node:sqlite`, no DB dependency |
 | `src/gate.js` | Outbound gate and paced sender — the ban defence |
+| `src/media-store.js` | Disk or OCI bucket for attachment bytes, no SDK |
 | `data/contacts.json` | Bridge's address-book cache (survives restarts) |
 | `src/server.js` | API, SSE fan-out, ingest loop |
 | `src/auth.js` / `src/adduser.js` | scrypt sessions, login lockout, admin role |

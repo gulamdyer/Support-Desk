@@ -10,6 +10,11 @@ services:
       # service publishes no ports, so it is reachable only on the compose
       # network, by the inbox.
       BRIDGE_BIND: 0.0.0.0
+      # The bridge writes inbound attachments and reads them back to send, so
+      # it needs the same storage config as the inbox. Setting these on only
+      # one service is the easiest way to get a half-working cutover.
+      MEDIA_STORE: ${MEDIA_STORE:-disk}
+      MEDIA_PAR: ${MEDIA_PAR:-}
     restart: unless-stopped
     # ONE bridge process per number, always. Two clients fight over the rotating
     # session keys and WhatsApp force-logs-out the device — so no scaling here,
@@ -40,6 +45,9 @@ services:
     environment:
       PORT: 8080
       BRIDGE_URL: http://bridge:3100
+      MEDIA_STORE: ${MEDIA_STORE:-disk}
+      MEDIA_PAR: ${MEDIA_PAR:-}
+      MEDIA_QUOTA_GB: ${MEDIA_QUOTA_GB:-0}
       # Set these in Coolify's env UI, not here:
       #   ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_NAME
       #   WINDOW_HOURS, CHAT_HOURLY_CAP, GLOBAL_HOURLY_CAP,
