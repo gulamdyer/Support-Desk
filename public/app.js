@@ -1262,6 +1262,11 @@ catRow?.addEventListener('wheel', (e) => {
 
 document.querySelectorAll('.cats .chip').forEach((c) => {
   c.onclick = () => {
+    // Tapping the sliver of a chip hanging off the edge should bring the whole
+    // thing into view, the way scrolling to it would have. 'nearest' moves the
+    // least it can get away with, and block:'nearest' stops it dragging the
+    // page up or down to do a sideways job.
+    c.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
     document.querySelectorAll('.cats .chip').forEach((x) => x.classList.toggle('on', x === c));
     category = c.dataset.cat;
     renderChats();
