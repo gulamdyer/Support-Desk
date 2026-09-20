@@ -4,8 +4,9 @@ The data volume fills because nothing ever deletes an attachment. This moves the
 bytes to an OCI bucket in Dubai (`me-dubai-1`) and leaves the rest of the app
 alone.
 
-Status: **code written, not yet cut over.** `MEDIA_STORE` defaults to `disk`, so
-until you set it to `oci` nothing about production behaviour changes.
+Status: **migrated.** 30,400 attachments are in the bucket, the disk copy is
+gone, and `MEDIA_STORE=oci` is set in production. The variable still defaults to
+`disk`, so a fresh deployment behaves exactly as it always did until it is set.
 
 ---
 
@@ -78,8 +79,10 @@ OCI Console → Storage → Buckets → Create Bucket, in **me-dubai-1**:
 - Visibility: **Private**
 - Versioning: **Disabled**
 - Auto-tiering: Disabled
-- **Do not create a lifecycle policy.** That is the only thing that would ever
-  delete an object. Without one, files live forever.
+- **No lifecycle policy covering the bucket as a whole.** A rule is the only
+  thing that ever deletes an object here, and attachments have to live forever.
+  The Backups section below adds one, scoped to the `backups/` prefix — safe
+  precisely because it is scoped, and dangerous the moment it is not.
 
 ### 3. Create the PAR
 
@@ -417,13 +420,20 @@ inbox.
 
 ### Schedule it
 
-Coolify → the inbox service → Scheduled Tasks:
+Coolify → **the `bridge` service** → Scheduled Tasks:
 
 ```
 npm run backup          # daily, e.g. 0 2 * * *
 ```
 
-It exits non-zero if an upload fails, so a run that has quietly stopped
+> It has to be `bridge`, not `inbox`. Both mount the `data` volume, so either
+> would back up the database — but only `bridge` mounts `auth_state`, and the
+> image ships an empty directory of that name. A task on `inbox` would tar that
+> empty directory and upload a session archive that looks fine and restores to
+> an unlinked number. The script refuses and exits non-zero rather than let
+> that happen.
+
+It also exits non-zero if an upload fails, so a run that has quietly stopped
 protecting anything shows as a failed task rather than a green one.
 
 ### Age them out
@@ -476,6 +486,11 @@ the instance to begin with.
 - **Usage totalling lists every object** (1000 per request, ~31 calls at current
   volume, cached 10 min). Fine at tens of thousands; swap for `GetBucket`
   `approximateSize` with instance principals if the object count ever explodes.
+- **The session archive is taken from a live directory.** The backup runs in
+  the `bridge` container, where Baileys rewrites session keys continuously, so
+  `tar` can catch one mid-write. The database does not have this problem —
+  `VACUUM INTO` is transactional. If a restored `auth_state` will not resume,
+  re-link from a laptop; that path is documented and takes minutes.
 - **A PAR cannot delete objects.** Oracle's own security design: a leaked URL
   can never destroy data. So the upload route asks the gate *before* storing
   bytes rather than storing and cleaning up after. Housekeeping deletes need

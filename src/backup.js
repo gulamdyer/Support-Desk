@@ -27,10 +27,20 @@ console.log(`✅ ${dbOut} (${(statSync(dbOut).size / 1024).toFixed(0)} KB)`);
 
 const made = [dbOut];
 
-if (existsSync(path.resolve('auth_state'))) {
+// Only the bridge container mounts the real auth_state volume; the image ships
+// an empty directory of that name, so running this anywhere else would archive
+// nothing, upload something that looks like a session backup, and restore to an
+// unlinked number. Refuse loudly instead — that is a thing you find out during
+// a disaster, which is the worst time to find it out.
+const authDir = path.resolve('auth_state');
+const authCount = existsSync(authDir) ? readdirSync(authDir).length : 0;
+if (!authCount) {
+  console.error('❌ auth_state is empty or missing — run this in the BRIDGE container, which mounts it.');
+  process.exitCode = 1;
+} else {
   const tar = path.join(OUT, `auth_state-${stamp}.tar.gz`);
   const ok = await new Promise((resolve) => execFile('tar', ['-czf', tar, 'auth_state'], (err) => {
-    console.log(err ? `⚠️  auth_state not archived: ${err.message}` : `✅ ${tar}`);
+    console.log(err ? `⚠️  auth_state not archived: ${err.message}` : `✅ ${tar} (${authCount} files)`);
     resolve(!err);
   }));
   if (ok) made.push(tar);

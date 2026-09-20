@@ -106,7 +106,7 @@ Redeploy must **stop the old container before starting the new one** (recreate,
 not rolling). Two bridge processes on one number fight over the rotating session
 keys and WhatsApp force-logs-out the device. Do not scale `bridge` past 1.
 
-### Backups (Coolify → Scheduled Tasks)
+### Backups (Coolify → Scheduled Tasks, on the `bridge` service)
 
 ```
 npm run backup      # nightly
