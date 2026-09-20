@@ -408,6 +408,69 @@ OCI bills what you **store**, not what you allocate. The allocation is free.
 
 ---
 
+## Backups
+
+`data/backups/` sits on the volume it is meant to protect: lose the instance and
+the backup goes with the history it was copying. `npm run backup` now also
+pushes each file to the bucket under `backups/`, so a lost server is not a lost
+inbox.
+
+### Schedule it
+
+Coolify → the inbox service → Scheduled Tasks:
+
+```
+npm run backup          # daily, e.g. 0 2 * * *
+```
+
+It exits non-zero if an upload fails, so a run that has quietly stopped
+protecting anything shows as a failed task rather than a green one.
+
+### Age them out
+
+A PAR cannot delete, so the app cannot prune the bucket. Use a lifecycle rule
+instead — Bucket → Lifecycle Policy Rules → Create:
+
+- Target: **Objects with prefix** `backups/`
+- Action: **Delete**, after e.g. **30** days
+
+> Scope it to the `backups/` prefix. A rule left on the whole bucket would
+> start deleting attachments, which nothing else in this system ever does.
+
+### Who can do what
+
+| | Admin | Owner |
+|---|---|---|
+| See the backup list and dates | ✅ | ✅ |
+| Download a backup | — | ✅ |
+| Restore one | — | ✅ |
+
+An admin can confirm backups are happening. Carrying every conversation off the
+server, or replacing the live history with an older copy, stays with the owner.
+
+### Restoring
+
+In the app: **Backups → Restore**, then type the backup's date to confirm. The
+file is staged and the app restarts; `db.js` swaps it in on the way back up,
+because writing over the database while a connection is open to it corrupts it.
+
+From nothing — a new instance, empty volumes — restore by hand:
+
+```bash
+export MEDIA_PAR='https://.../o/'
+curl -sf "${MEDIA_PAR}backups%2Finbox-2026-09-20.db" -o inbox.db
+docker cp inbox.db <inbox-container>:/app/data/inbox.db
+curl -sf "${MEDIA_PAR}backups%2Fauth_state-2026-09-20.tar.gz" -o auth_state.tar.gz
+tar -xzf auth_state.tar.gz && docker cp auth_state/. <bridge-container>:/app/auth_state/
+```
+
+Then restart both services. Attachments need no restoring — they were never on
+the instance to begin with.
+
+> `auth_state` is credentials, not data: whoever holds it can take over the
+> WhatsApp number. It shares the bucket with the attachments, so the PAR now
+> guards the session as well as the history.
+
 ## Known ceilings
 
 - **Usage totalling lists every object** (1000 per request, ~31 calls at current

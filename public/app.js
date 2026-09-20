@@ -2033,6 +2033,99 @@ $('storage').onclick = async () => {
     $('storageBody').innerHTML = d.store === 'oci' ? cloudView(d) : diskView(d);
   } catch (err) { $('storageBody').innerHTML = `<p class="err">${esc(err.message)}</p>`; }
 };
+// --- admin: backups -------------------------------------------------------
+// Admins see that backups are happening. Only the owner can take one off the
+// server or put one back.
+const backupWhen = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(+d) ? '' : d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+};
+
+function backupRows(d) {
+  if (d.store !== 'oci') {
+    return `<p class="hint warn-hint">Attachments are on the server disk, so backups stay there too —
+      on the same volume they are meant to protect. Set <code>MEDIA_STORE=oci</code> to send them off the box.</p>`;
+  }
+  if (!d.backups.length) {
+    return `<p class="hint warn-hint">No backups in the bucket yet. If the nightly task is configured,
+      the first one appears after it next runs.</p>`;
+  }
+  const newest = d.backups[0];
+  const stale = newest.at && (Date.now() - new Date(newest.at)) > 48 * 3600e3;
+  return `
+    ${stale ? `<p class="hint warn-hint" style="margin-bottom:14px">The newest backup is more than two days old —
+      the scheduled task may have stopped running.</p>` : ''}
+    <div class="store-rows">
+      ${d.backups.map((b) => `
+        <div class="store-row">
+          <span>${esc(b.name)}${b.at ? `<br><span class="hint">${esc(backupWhen(b.at))}</span>` : ''}</span>
+          <span>
+            ${mb(b.size)}
+            ${d.canRestore ? `
+              <button class="linkish owner-only" data-dl-backup="${esc(b.name)}">Download</button>
+              ${b.name.endsWith('.db') ? `<button class="linkish danger owner-only" data-restore="${esc(b.name)}">Restore</button>` : ''}
+            ` : ''}
+          </span>
+        </div>`).join('')}
+    </div>
+    ${d.canRestore ? '' : '<p class="hint" style="margin-top:14px">Downloading and restoring are the owner\'s to do.</p>'}`;
+}
+
+$('backups').onclick = async () => {
+  closeMenu();
+  $('backupModal').hidden = false;
+  $('backupBody').innerHTML = '<p class="hint">Reading…</p>';
+  try {
+    $('backupBody').innerHTML = backupRows(await api('/api/admin/backups'));
+  } catch (err) { $('backupBody').innerHTML = `<p class="err">${esc(err.message)}</p>`; }
+};
+
+$('backupBody').onclick = async (e) => {
+  const dl = e.target.closest('[data-dl-backup]');
+  if (dl) {
+    const a = document.createElement('a');
+    a.href = `/api/admin/backups/${encodeURIComponent(dl.dataset.dlBackup)}/download`;
+    a.download = dl.dataset.dlBackup;
+    a.click();
+    return;
+  }
+  const go = e.target.closest('[data-restore-go]');
+  if (go) {
+    const name = go.dataset.restoreGo;
+    const typed = $('restoreConfirm')?.value.trim() || '';
+    // The date has to be typed out. This replaces every conversation in the app
+    // with an older copy, and nothing inside the app can undo it.
+    if (!name.includes(typed)) return toast('That did not match the backup date — nothing was changed.');
+    try {
+      // api() infers POST from having a body, so it needs one.
+      await api(`/api/admin/backups/${encodeURIComponent(name)}/restore`, { confirm: typed });
+      $('backupBody').innerHTML = `<p class="hint">Restoring from ${esc(name)}. The app is restarting — reload in a few seconds.</p>`;
+    } catch (err) { toast(err.message); }
+    return;
+  }
+
+  const r = e.target.closest('[data-restore]');
+  if (!r) return;
+  const name = r.dataset.restore;
+  const date = (name.match(/\d{4}-\d{2}-\d{2}/) || [''])[0];
+  r.closest('.store-row').insertAdjacentHTML('afterend', `
+    <div class="store-row restore-ask">
+      <span class="hint">Replaces <strong>every</strong> conversation with the copy from ${esc(date)}.
+        Type that date to confirm.</span>
+      <span>
+        <input id="restoreConfirm" placeholder="YYYY-MM-DD" autocomplete="off" size="11">
+        <button class="linkish danger" data-restore-go="${esc(name)}">Restore</button>
+      </span>
+    </div>`);
+  r.remove();
+  $('restoreConfirm').focus();
+};
+
+const closeBackups = () => { $('backupModal').hidden = true; };
+$('backupClose').onclick = closeBackups;
+$('backupModal').onclick = (e) => { if (e.target.id === 'backupModal') closeBackups(); };
+
 const closeStorage = () => { $('storageModal').hidden = true; };
 $('storageClose').onclick = closeStorage;
 $('storageModal').onclick = (e) => { if (e.target.id === 'storageModal') closeStorage(); };
@@ -2214,6 +2307,10 @@ function start() {
   $('menuName').textContent = me.name;
   $('menuRole').textContent = me.is_admin ? 'Administrator' : 'Support agent';
   document.querySelectorAll('.admin-only').forEach((el) => { el.hidden = !me.is_admin; });
+  // Narrower than admin: carrying the history off the server or replacing it
+  // belongs to the owner. The routes enforce it too — this only keeps controls
+  // an admin cannot use out of their way.
+  document.querySelectorAll('.owner-only').forEach((el) => { el.hidden = !me.is_owner; });
   loadChats(); connect();
   // Keeps the window countdown honest — but reloading the newest messages
   // under someone reading older history would throw away where they are.

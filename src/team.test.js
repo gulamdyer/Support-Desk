@@ -77,5 +77,29 @@ check('the customer still has exactly one admin of their own', () => {
   assert.equal(admins[0].username, 'client.admin');
 });
 
+// Downloading every conversation, or replacing them with an older copy, is the
+// owner's alone — and requireOwner guards on a flag that has to survive two
+// hops to reach it: the session JOIN, then the projection the routes actually
+// see. Dropped at either hop it arrives undefined, so the gate fails closed and
+// locks the owner out of their own restore, looking for all the world like a
+// permissions bug rather than a missing column.
+const { publicUser } = await import('./auth.js');
+const sessionFor = (user) => {
+  const token = String(user.id).padStart(64, 'a');
+  S.addSession.run(token, user.id, Math.floor(Date.now() / 1000));
+  const sess = S.session.get(token, 0);
+  return publicUser({ ...sess, id: sess.user_id });
+};
+
+check('the owner flag reaches the routes that guard on it', () => {
+  assert.equal(sessionFor(owner).is_owner, true);
+});
+
+check('an admin who is not the owner is never mistaken for one', () => {
+  const asSeen = sessionFor(clientAdmin);
+  assert.equal(asSeen.is_admin, true);
+  assert.equal(asSeen.is_owner, false);
+});
+
 rmSync(dir, { recursive: true, force: true });
-console.log(`✅ team: ${n}/${n} — owner hidden, shared password is agents only`);
+console.log(`✅ team: ${n}/${n} — owner hidden, shared password is agents only, owner gate intact`);

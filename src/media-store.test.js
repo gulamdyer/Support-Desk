@@ -70,6 +70,32 @@ assert.equal(calls.at(-1)[1], 'DELETE');
 // Pagination: both pages counted, not just the first.
 assert.deepEqual(await oci.ociUsage(), { bytes: 35, files: 3 });
 
+// Backups share the bucket but are not attachments. Counting them would inflate
+// the number the panel labels "Attachments" — which is what a client is billed
+// against — and would climb every night on its own.
+globalThis.fetch = async (url) => {
+  const listing = String(url).includes('fields=');
+  if (!listing) return { ok: true, arrayBuffer: async () => new TextEncoder().encode('x').buffer };
+  const prefixed = String(url).includes('prefix=');
+  return {
+    ok: true,
+    json: async () => ({
+      objects: prefixed
+        ? [{ name: 'backups/inbox-2026-09-20.db', size: 900, timeCreated: '2026-09-20T02:00:00Z' }]
+        : [{ name: 'img_a.jpg', size: 10 },
+           { name: 'backups/inbox-2026-09-20.db', size: 900 },
+           { name: 'doc_b.pdf', size: 20 }],
+    }),
+  };
+};
+assert.deepEqual(await oci.ociUsage(), { bytes: 30, files: 2 },
+  'ociUsage must skip the backup prefix, or the billed attachment total drifts upward nightly');
+
+// ...and listing that prefix returns the backups themselves.
+const backups = await oci.listObjects(oci.BACKUP_PREFIX);
+assert.equal(backups.length, 1);
+assert.equal(backups[0].name, 'backups/inbox-2026-09-20.db');
+
 // 304 is not "missing". It sits outside the 2xx range, so a naive res.ok check
 // turns every revalidation into a 404 and the browser re-downloads everything.
 globalThis.fetch = async (u, init = {}) => ({

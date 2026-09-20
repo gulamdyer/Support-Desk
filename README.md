@@ -114,8 +114,22 @@ npm run backup      # nightly
 
 Writes `data/backups/inbox-<date>.db` (via `VACUUM INTO`, safe on a live WAL
 database) and `auth_state-<date>.tar.gz`, keeping `BACKUP_KEEP_DAYS` (14).
-That lands *inside* the `data` volume — pair it with a Coolify volume backup so
-a lost server isn't a lost history.
+
+That lands *inside* the `data` volume — the very thing it is meant to protect —
+so with `MEDIA_STORE=oci` each file is also pushed to the bucket under
+`backups/`, and a lost server stops being a lost history. The task exits
+non-zero if an upload fails, so a run that has quietly stopped protecting
+anything shows up as failed rather than green.
+
+**Admins see the backup list and its dates; only the owner can download one or
+restore it.** A restore is staged and the app restarts — the swap happens before
+anything opens the database, because writing over it under a live connection
+corrupts it. Age old copies out with a bucket lifecycle rule scoped to the
+`backups/` prefix; a pre-authenticated request cannot delete, by design, so the
+app never prunes the bucket itself.
+
+See [OCI-MIGRATION.md](OCI-MIGRATION.md) for the schedule, the lifecycle rule,
+and how to restore onto a bare instance.
 
 ---
 

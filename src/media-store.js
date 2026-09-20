@@ -113,17 +113,53 @@ export async function removeMedia(diskPath) {
 export async function ociUsage() {
   let bytes = 0;
   let files = 0;
+  // Backups share the bucket but are not attachments. Counting them here would
+  // inflate the figure the panel labels "Attachments" — and that figure is what
+  // a client gets billed against.
+  for (const o of await listObjects()) {
+    if (o.name?.startsWith(BACKUP_PREFIX)) continue;
+    bytes += o.size || 0;
+    files += 1;
+  }
+  return { bytes, files };
+}
+
+// --- anything that is not a chat attachment -------------------------------
+// Backups live in the same bucket under their own prefix. One bucket, one PAR,
+// one lifecycle rule to age them out — and nothing new to configure.
+export const BACKUP_PREFIX = 'backups/';
+
+/** Every object, or every object under a prefix. Pages at 1000 a time. */
+export async function listObjects(prefix = '') {
+  const out = [];
   let start = '';
   for (;;) {
-    const q = new URLSearchParams({ fields: 'name,size', limit: '1000' });
+    const q = new URLSearchParams({ fields: 'name,size,timeCreated', limit: '1000' });
+    if (prefix) q.set('prefix', prefix);
     if (start) q.set('start', start);
     const res = await fetch(`${PAR}?${q}`, { signal: AbortSignal.timeout(30000) });
     if (!res.ok) {
       throw new Error(`Bucket listing failed (${res.status}). Enable Object Listing on the PAR.`);
     }
     const page = await res.json();
-    for (const o of page.objects || []) { bytes += o.size || 0; files += 1; }
+    out.push(...(page.objects || []));
     start = page.nextStartWith || '';
-    if (!start) return { bytes, files };
+    if (!start) return out;
   }
+}
+
+/** Store bytes under an exact object name. saveMedia derives its name from a
+ *  disk path; a backup needs to say where it goes. */
+export async function putObject(name, buf) {
+  if (!isOci()) throw new Error('MEDIA_STORE is not oci — there is no bucket to upload to.');
+  const res = await call(name, { method: 'PUT', body: buf });
+  if (!res.ok) throw new Error(`Bucket rejected ${name} (${res.status}).`);
+}
+
+/** One object as a Buffer, or null if it is not there. */
+export async function getObject(name) {
+  if (!isOci()) return null;
+  const res = await call(name);
+  if (!res.ok) return null;
+  return Buffer.from(await res.arrayBuffer());
 }

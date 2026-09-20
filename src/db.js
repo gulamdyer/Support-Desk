@@ -1,12 +1,28 @@
 /** SQLite store — the source of truth. WhatsApp is only the transport.
  *  Uses node:sqlite (built in since Node 22.5) so there is no DB dependency. */
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, existsSync, renameSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 
 // DB_PATH exists so tests can run against a throwaway file. Unset in production.
 const DB_PATH = process.env.DB_PATH || path.resolve('data', 'inbox.db');
 mkdirSync(path.dirname(DB_PATH), { recursive: true });
+
+// A restore the owner staged, swapped in before anything opens the database.
+// It has to happen here: writing over the file while a connection is live
+// corrupts it, which is why the restore route stages a copy and exits instead
+// of replacing it in place.
+const staged = `${DB_PATH}.restore`;
+if (existsSync(staged)) {
+  // The old WAL and shared-memory files describe the database being replaced.
+  // Leaving them would let SQLite replay them over the restored copy.
+  for (const suffix of ['-wal', '-shm']) {
+    try { unlinkSync(DB_PATH + suffix); } catch {}
+  }
+  renameSync(staged, DB_PATH);
+  console.log('♻️  restored the database from a staged backup');
+}
+
 export const db = new DatabaseSync(DB_PATH);
 
 db.exec(`
@@ -116,7 +132,7 @@ CREATE INDEX IF NOT EXISTS idx_contacts_lid   ON contacts(lid)   WHERE lid IS NO
 CREATE TABLE IF NOT EXISTS wa_events (
   id      INTEGER PRIMARY KEY AUTOINCREMENT,
   ts      INTEGER NOT NULL,
-  kind    TEXT NOT NULL,   -- link_requested | linked | unlinked | contacts_synced | contacts_skipped
+  kind    TEXT NOT NULL,   -- link_requested | linked | unlinked | contacts_synced | contacts_skipped | backup_restored
   detail  TEXT,            -- the number, or how many contacts arrived
   user_id INTEGER REFERENCES users(id)
 );
@@ -476,7 +492,11 @@ const S = {
   dropUserSessions: db.prepare(`DELETE FROM sessions WHERE user_id = ?`),
   dropExpiredSessions: db.prepare(`DELETE FROM sessions WHERE created_ts <= ?`),
   addSession: db.prepare(`INSERT INTO sessions (token, user_id, created_ts) VALUES (?,?,?)`),
-  session: db.prepare(`SELECT s.user_id, u.username, u.name, u.is_admin, u.active FROM sessions s
+  // is_owner rides along because the owner-only routes guard on it. Without it
+  // here the flag is undefined by the time requireOwner sees it, and the gate
+  // fails closed on the one account it exists to admit.
+  session: db.prepare(`SELECT s.user_id, u.username, u.name, u.is_admin, u.is_owner, u.active
+    FROM sessions s
     JOIN users u ON u.id = s.user_id WHERE s.token = ? AND s.created_ts > ?`),
   dropSession: db.prepare(`DELETE FROM sessions WHERE token = ?`),
 };

@@ -8,8 +8,9 @@
  */
 import { DatabaseSync } from 'node:sqlite';
 import { execFile } from 'node:child_process';
-import { mkdirSync, readdirSync, rmSync, statSync, existsSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, existsSync } from 'node:fs';
 import path from 'node:path';
+import { isOci, putObject, BACKUP_PREFIX } from './media-store.js';
 
 const OUT = path.resolve(process.env.BACKUP_DIR || 'data/backups');
 const KEEP_DAYS = Number(process.env.BACKUP_KEEP_DAYS || 14);
@@ -24,12 +25,32 @@ db.exec(`VACUUM INTO '${dbOut.replace(/'/g, "''")}'`);
 db.close();
 console.log(`✅ ${dbOut} (${(statSync(dbOut).size / 1024).toFixed(0)} KB)`);
 
+const made = [dbOut];
+
 if (existsSync(path.resolve('auth_state'))) {
   const tar = path.join(OUT, `auth_state-${stamp}.tar.gz`);
-  await new Promise((resolve) => execFile('tar', ['-czf', tar, 'auth_state'], (err) => {
+  const ok = await new Promise((resolve) => execFile('tar', ['-czf', tar, 'auth_state'], (err) => {
     console.log(err ? `⚠️  auth_state not archived: ${err.message}` : `✅ ${tar}`);
-    resolve();
+    resolve(!err);
   }));
+  if (ok) made.push(tar);
+}
+
+// A backup sitting on the volume it is meant to protect is not a backup: lose
+// the instance and it goes with the history it was copying. Push it off the box.
+if (isOci()) {
+  for (const f of made) {
+    const name = BACKUP_PREFIX + path.basename(f);
+    try {
+      await putObject(name, readFileSync(f));
+      console.log(`☁️  ${name}`);
+    } catch (err) {
+      // Loud, and a non-zero exit, so a scheduled run that silently stopped
+      // protecting anything shows up as a failed task rather than a green one.
+      console.error(`❌ upload failed for ${name}: ${err.message}`);
+      process.exitCode = 1;
+    }
+  }
 }
 
 // Prune old backups so the volume doesn't fill up silently.

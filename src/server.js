@@ -1,13 +1,14 @@
 /** Shared WhatsApp inbox — HTTP server, ingest loop and SSE fan-out. */
 import express from 'express';
 import path from 'node:path';
-import { existsSync, statSync, statfsSync, readdirSync } from 'node:fs';
+import { existsSync, statSync, statfsSync, readdirSync, writeFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { randomBytes } from 'node:crypto';
 import S, { recordInbound, now, db, contactChanged } from './db.js';
-import { login, logout, requireAuth, requireAdmin, hashPassword, seedAdmin, publicUser, LoginError } from './auth.js';
+import { login, logout, requireAuth, requireAdmin, requireOwner, hashPassword, seedAdmin, publicUser, LoginError } from './auth.js';
 import { queueReply, queueMedia, windowState, checkOutbound, runSender, GateError } from './gate.js';
-import { isOci, quotaBytes, saveMedia, openMedia, removeMedia, ociUsage } from './media-store.js';
+import { isOci, quotaBytes, saveMedia, openMedia, removeMedia, ociUsage,
+  listObjects, getObject, BACKUP_PREFIX } from './media-store.js';
 
 // Same reasoning as the bridge: an async stream error (a media fetch dying
 // mid-flight) is emitted where no try/catch can see it, and would otherwise
@@ -18,6 +19,8 @@ process.on('unhandledRejection', (err) => console.error('unhandled rejection (st
 const PORT = Number(process.env.PORT || 8080);
 const BRIDGE_URL = process.env.BRIDGE_URL || 'http://127.0.0.1:3100';
 const MEDIA_DIR = path.resolve('data', 'media');
+// Mirrors db.js exactly, so a staged restore lands where the next boot looks.
+const DB_FILE = process.env.DB_PATH || path.resolve('data', 'inbox.db');
 const CLAIM_TTL = 2 * 3600; // an untouched claim is released so nobody is blocked
 const PLACEHOLDER_BODY = /^\[(image|audio|video|document|sticker|media) received\]$/i;
 const realBody = (b) => (PLACEHOLDER_BODY.test(b || '') ? '' : (b || ''));
@@ -481,6 +484,66 @@ async function storageUsage() {
 }
 
 app.get('/api/admin/storage', requireAdmin, wrap(async (req, res) => res.json(await storageUsage())));
+
+// --- backups ---------------------------------------------------------------
+// A backup sitting on the volume it protects is not a backup: lose the instance
+// and it goes with the history it was copying. These live in the bucket, and the
+// app only ever lists them, hands one back, or stages one for the next boot.
+//
+// An admin can see that backups are happening — that is the point of showing
+// them. Carrying every conversation off the server, or replacing the live
+// history with an older copy, stays with the owner.
+app.get('/api/admin/backups', requireAdmin, wrap(async (req, res) => {
+  if (!isOci()) return res.json({ store: 'disk', backups: [] });
+  const backups = (await listObjects(BACKUP_PREFIX))
+    .map((o) => ({ name: o.name.slice(BACKUP_PREFIX.length), size: o.size || 0, at: o.timeCreated || null }))
+    // Names are inbox-YYYY-MM-DD, so sorting them is sorting by date — and it
+    // still holds if the bucket omits timeCreated.
+    .sort((a, b) => b.name.localeCompare(a.name));
+  res.json({ store: 'oci', backups, canRestore: !!req.user.is_owner });
+}));
+
+app.get('/api/admin/backups/:name/download', requireOwner, wrap(async (req, res) => {
+  const name = path.basename(String(req.params.name)); // basename: no climbing out of the prefix
+  const buf = await getObject(BACKUP_PREFIX + name);
+  if (!buf) return res.status(404).json({ error: 'That backup is no longer in the bucket.' });
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${name.replace(/"/g, '')}"`);
+  res.send(buf);
+}));
+
+/** Stage a backup and stop. The swap happens in db.js on the way back up,
+ *  because writing over the database file while a connection is open to it
+ *  corrupts it — there is no safe way to do this in place. */
+app.post('/api/admin/backups/:name/restore', requireOwner, wrap(async (req, res) => {
+  const name = path.basename(String(req.params.name));
+  if (!name.startsWith('inbox-') || !name.endsWith('.db')) {
+    return res.status(422).json({
+      error: 'Only a database backup can be restored here. The WhatsApp session archive is unpacked by hand.',
+    });
+  }
+  // The typed date has to come back with the request. The UI asks for it, but
+  // the check belongs here as well: this route replaces every conversation in
+  // the app, and a bare POST to the URL should not be enough to set that off.
+  const confirm = String(req.body?.confirm || '').trim();
+  if (!confirm || !name.includes(confirm)) {
+    return res.status(422).json({ error: 'Confirm by sending the backup date exactly as it appears in the name.' });
+  }
+
+  const buf = await getObject(BACKUP_PREFIX + name);
+  if (!buf) return res.status(404).json({ error: 'That backup is no longer in the bucket.' });
+
+  writeFileSync(`${DB_FILE}.restore`, buf);
+  logWa('backup_restored', name, req.user.id);
+  res.json({ ok: true, name });
+
+  // Answer first, then go down so the restart picks the staged copy up. A crash
+  // mid-send is already handled — requeueStuck runs on boot — so nothing
+  // outbound is lost by stopping here.
+  console.log(`♻️  restore staged from ${name} by ${req.user.username} — restarting`);
+  setTimeout(() => process.exit(0), 250);
+}));
 
 // Importing the address book is a deliberate choice, made once per linked
 // phone. Neither route touches pairing.

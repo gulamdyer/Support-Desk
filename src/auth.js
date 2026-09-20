@@ -70,7 +70,7 @@ export async function login(username, password, ip = '?') {
 }
 
 export const publicUser = (u) =>
-  ({ id: u.id, username: u.username, name: u.name, is_admin: !!u.is_admin });
+  ({ id: u.id, username: u.username, name: u.name, is_admin: !!u.is_admin, is_owner: !!u.is_owner });
 
 export function logout(token) { if (token) S.dropSession.run(token); }
 
@@ -88,6 +88,15 @@ export function requireAuth(req, res, next) {
 /** Password resets and user management are admin-only. */
 export function requireAdmin(req, res, next) {
   if (!req.user?.is_admin) return res.status(403).json({ error: 'Admins only.' });
+  next();
+}
+
+/** Narrower than admin: taking a copy of every conversation off the server, or
+ *  replacing the live database with an older one, is the owner's call alone.
+ *  An admin manages the team and can watch that backups are happening; they
+ *  cannot walk away with the history or overwrite it. */
+export function requireOwner(req, res, next) {
+  if (!req.user?.is_owner) return res.status(403).json({ error: 'Owner only.' });
   next();
 }
 
