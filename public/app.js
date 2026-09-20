@@ -1653,10 +1653,10 @@ function connect() {
 // Connection wording lives here and nowhere else. Nothing internal — no service
 // names, no process names — ever reaches the screen.
 const STATE_LABEL = {
-  connected: 'WhatsApp connected',
-  logged_out: 'WhatsApp not linked',
-  disconnected: 'WhatsApp offline',
-  unreachable: 'WhatsApp offline',
+  connected: 'Connected',
+  logged_out: 'Not linked',
+  disconnected: 'Offline',
+  unreachable: 'Offline',
   starting: 'Connecting…',
 };
 const stateLabel = (s) => STATE_LABEL[s] || 'Connecting…';
@@ -2150,7 +2150,7 @@ async function loadWa() {
       ? `+${s.number}${s.contactSync === 'on' && s.contacts ? ` · ${s.contacts} contacts synced` : ''}` : '';
 
     // Announce the moment it lands, and only that moment.
-    if (linked && waWasLinked === false) toast(`WhatsApp connected as +${s.number}`, 'ok');
+    if (linked && waWasLinked === false) toast(`Connected as +${s.number}`, 'ok');
     waWasLinked = linked;
 
     // Asked once per linked phone. Unlinking resets it, so a new phone is a new
