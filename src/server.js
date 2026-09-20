@@ -436,46 +436,48 @@ app.get('/api/admin/whatsapp/history', requireAdmin, (req, res) =>
 // Nothing prunes attachments, so the volume fills quietly. Walking the media
 // directory is cheap now and gets less so, hence the short cache: this is a
 // panel someone opens, not something on a hot path.
-let storageCache = { at: 0, data: null };
+// Only the attachment totals are worth caching: listing a bucket is ~31
+// requests, and the local walk stats every file in the directory. The disk
+// figures are two syscalls, so they are read fresh on every open — an admin who
+// has just deleted something has to watch it go, not wonder for ten minutes
+// whether the command worked.
+let mediaCache = { at: 0, data: null };
 async function storageUsage() {
-  // Listing a bucket is ~31 requests at current volume, so it earns a longer
-  // cache than walking a local directory ever needed.
-  if (Date.now() - storageCache.at < (isOci() ? 600_000 : 60_000)) return storageCache.data;
-
   const fsStat = statfsSync(path.resolve('data'));
   const total = fsStat.blocks * fsStat.bsize;
   const free = fsStat.bavail * fsStat.bsize;
-
-  let mediaBytes = 0;
-  let mediaFiles = 0;
-  let mediaError = null;
-  if (isOci()) {
-    // This panel is the number a client gets billed against, so it totals what
-    // the bucket actually holds rather than a counter we keep and hope stays
-    // true. A failure has to say so — reporting 0 would read as "nothing
-    // stored", which is the one wrong answer that looks plausible.
-    try { ({ bytes: mediaBytes, files: mediaFiles } = await ociUsage()); }
-    catch (err) { mediaError = err.message; }
-  } else {
-    try {
-      for (const f of readdirSync(MEDIA_DIR)) {
-        try { mediaBytes += statSync(path.join(MEDIA_DIR, f)).size; mediaFiles += 1; } catch {}
-      }
-    } catch { /* no media yet */ }
-  }
 
   const sizeOf = (p) => { try { return statSync(p).size; } catch { return 0; } };
   const dbBytes = ['inbox.db', 'inbox.db-wal', 'inbox.db-shm']
     .reduce((n, f) => n + sizeOf(path.resolve('data', f)), 0);
 
-  storageCache = {
-    // Don't cache a failure — otherwise fixing the PAR means waiting 10 minutes
-    // to see that it worked.
-    at: mediaError ? 0 : Date.now(),
-    data: { total, free, used: total - free, mediaBytes, mediaFiles, dbBytes,
-      store: isOci() ? 'oci' : 'disk', quotaBytes: quotaBytes(), mediaError },
-  };
-  return storageCache.data;
+  if (Date.now() - mediaCache.at >= (isOci() ? 600_000 : 60_000)) {
+    let bytes = 0;
+    let files = 0;
+    let error = null;
+    if (isOci()) {
+      // This panel is the number a client gets billed against, so it totals what
+      // the bucket actually holds rather than a counter we keep and hope stays
+      // true. A failure has to say so — reporting 0 would read as "nothing
+      // stored", which is the one wrong answer that looks plausible.
+      try { ({ bytes, files } = await ociUsage()); }
+      catch (err) { error = err.message; }
+    } else {
+      try {
+        for (const f of readdirSync(MEDIA_DIR)) {
+          try { bytes += statSync(path.join(MEDIA_DIR, f)).size; files += 1; } catch {}
+        }
+      } catch { /* no media yet */ }
+    }
+    // Don't cache a failure — otherwise fixing the PAR means waiting it out to
+    // see that it worked.
+    mediaCache = { at: error ? 0 : Date.now(), data: { bytes, files, error } };
+  }
+  const m = mediaCache.data;
+
+  return { total, free, used: total - free,
+    mediaBytes: m.bytes, mediaFiles: m.files, dbBytes,
+    store: isOci() ? 'oci' : 'disk', quotaBytes: quotaBytes(), mediaError: m.error };
 }
 
 app.get('/api/admin/storage', requireAdmin, wrap(async (req, res) => res.json(await storageUsage())));
