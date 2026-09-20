@@ -81,8 +81,12 @@ export async function openMedia(name, range) {
   return res;
 }
 
-/** A file the gate rejected. Best-effort: a leftover object costs a fraction of
- *  a cent, and failing the agent's send over it would be worse. */
+/** A file the gate rejected. On disk this removes it; against a bucket it will
+ *  not, because a PAR cannot delete objects — deliberate, so that a leaked URL
+ *  can never destroy data. That is exactly why the upload route asks the gate
+ *  before storing anything, leaving this for the rare race where a file is
+ *  refused after the bytes already landed. A stray object costs a fraction of a
+ *  cent, and failing an agent's send over it would be worse. */
 export async function removeMedia(diskPath) {
   if (!isOci()) {
     try { unlinkSync(diskPath); } catch {}

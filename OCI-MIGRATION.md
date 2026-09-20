@@ -103,9 +103,43 @@ Treat the URL as a password: anyone holding it can read and write the bucket.
 Put it straight into Coolify's environment UI. It does not belong in the repo,
 in a chat transcript, or in a ticket.
 
+**Verify it before depending on it.** This catches the Object Listing checkbox,
+which is easy to miss and is what the storage panel needs:
+
+```bash
+export MEDIA_PAR='https://.../o/'
+
+echo hello > /tmp/par-test.txt
+curl -sf -X PUT -T /tmp/par-test.txt "${MEDIA_PAR}par-test.txt" && echo "write OK"
+curl -sf "${MEDIA_PAR}par-test.txt"                             && echo "read OK"
+curl -sf "${MEDIA_PAR}?fields=name,size&limit=1" >/dev/null     && echo "listing OK"
+```
+
+All three must print OK. There is deliberately no DELETE here: a PAR cannot
+delete objects. Remove the test file with the console or the CLI:
+
+```bash
+oci os object delete -bn wa-media --object-name par-test.txt --auth instance_principal
+```
+
 ### 4. Backfill
 
-On the instance. The OCI CLI ships on OCI compute images.
+On the instance, **from the host** — not inside a container. The app image is
+Alpine with no `curl`, and `data/media` is a Docker named volume, so there is no
+such directory next to the app. Find the real one first:
+
+```bash
+docker volume ls | grep data
+export MEDIA_ROOT="$(docker volume inspect <volume> --format '{{.Mountpoint}}')/media"
+ls "$MEDIA_ROOT" | head
+```
+
+**The OCI CLI is not on every image** — it was missing on this one. Either
+install it, or skip it and use the PAR route below, which needs nothing:
+
+```bash
+bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)"
+```
 
 > **Prerequisite:** `--auth instance_principal` only works if a dynamic group
 > containing this instance *and* a policy granting it `manage objects` in the
@@ -113,35 +147,75 @@ On the instance. The OCI CLI ships on OCI compute images.
 > store — not no setup. If that isn't configured, use the PAR route below.
 
 ```bash
-cd /path/to/app
-find data/media -type f | wc -l          # note this number
+cd "$MEDIA_ROOT"
+find . -type f | wc -l                   # note this number
 
 oci os object bulk-upload \
   -bn wa-media \
-  --src-dir data/media \
+  --src-dir . \
   --parallel-upload-count 20 \
   --auth instance_principal
 ```
 
 No instance principal configured? The PAR is already a write credential, so it
-can do the backfill by itself — no IAM, no keys:
+can do the backfill by itself — no IAM, no keys.
+
+Object names have to be URL-encoded, or the ~500 agent uploads with spaces in
+them land under mangled names and 404 when opened. Both sanitisers reduce
+filenames to `[A-Za-z0-9_. -]`, so a space is the *only* character that ever
+needs encoding — `sed` covers it, and it matches the `encodeURIComponent` the
+app uses to read them back:
 
 ```bash
 export MEDIA_PAR='https://.../o/'        # same value the app uses
-find data/media -type f -printf '%f\0' \
-  | xargs -0 -P 16 -I{} curl -sf -X PUT -T data/media/{} "$MEDIA_PAR{}"
+cd "$MEDIA_ROOT"
+find . -type f -printf '%f\0' \
+  | xargs -0 -P 16 -I{} sh -c \
+      'curl -sf -X PUT -T "$1" "$MEDIA_PAR$(printf %s "$1" | sed "s/ /%20/g")" \
+         || echo "FAILED: $1"' _ {}
 ```
 
-That fallback does no URL-encoding, so check for filenames with spaces first —
-agent uploads can contain them, and those need the `oci` CLI (which encodes
-properly) or they will 404 when opened:
-
-```bash
-find data/media -name '* *' | wc -l      # expect 0 before using the curl route
-```
+Any `FAILED:` lines are the files to re-run. Silence means everything landed.
 
 9.4 GB same-region finishes in minutes either way. The directory is flat, so
 object names come out as bare basenames — exactly what the app asks for.
+
+**Count what actually landed** before trusting the backfill. Without the CLI,
+page the listing through the PAR:
+
+```bash
+python3 - <<'EOF'
+import os, json, urllib.parse, urllib.request
+par = os.environ["MEDIA_PAR"]
+if not par.endswith("/"): par += "/"
+total, start = 0, ""
+while True:
+    u = par + "?fields=name&limit=1000" + ("&start=" + urllib.parse.quote(start) if start else "")
+    page = json.load(urllib.request.urlopen(u))
+    total += len(page.get("objects", []))
+    start = page.get("nextStartWith")
+    if not start: break
+print("objects in bucket:", total)
+EOF
+```
+
+It must equal the `find ... | wc -l` count from the start of this step. A
+shortfall is almost always the space-encoding problem above.
+
+A matching count is still not proof — the files could be there under names the
+app will never ask for. Fetch one with a space in it, encoded the way the app
+encodes it:
+
+```bash
+cd "$MEDIA_ROOT"
+sample=$(find . -name '* *' -type f -printf '%f\n' | head -1)
+enc=$(printf %s "$sample" | sed 's/ /%20/g')
+echo "$sample  ->  $enc"
+curl -s -o /dev/null -w 'HTTP %{http_code}\n' "${MEDIA_PAR}${enc}"
+```
+
+`HTTP 200` means the stored names match what the app will request. Anything
+else and those files are present but unreachable.
 
 ### 5. Cut over
 
@@ -158,11 +232,33 @@ MEDIA_QUOTA_GB=1024
 Between step 4 and step 5, inbound media kept landing on disk only. **Skip this
 and those files break silently weeks later.**
 
+Mark the moment the backfill finished, so the sweep only carries what arrived
+after it instead of re-uploading 9.4 GB:
+
 ```bash
-oci os object bulk-upload \
-  -bn wa-media --src-dir data/media \
+touch /root/backfill-done      # the moment step 4 completes
+```
+
+With the CLI:
+
+```bash
+cd "$MEDIA_ROOT"
+oci os object bulk-upload -bn wa-media --src-dir . \
   --no-overwrite --parallel-upload-count 20 --auth instance_principal
 ```
+
+Or through the PAR, carrying only what is newer than the marker:
+
+```bash
+cd "$MEDIA_ROOT"
+find . -type f -newer /root/backfill-done -printf '%f\0' \
+  | xargs -0 -P 16 -I{} sh -c \
+      'curl -sf -X PUT -T "$1" "$MEDIA_PAR$(printf %s "$1" | sed "s/ /%20/g")" \
+         || echo "FAILED: $1"' _ {}
+```
+
+Recount afterwards: it must equal `find . -type f | wc -l` plus any stray test
+objects.
 
 ### 7. Test with the disk still present
 
@@ -260,6 +356,10 @@ OCI bills what you **store**, not what you allocate. The allocation is free.
 - **Usage totalling lists every object** (1000 per request, ~31 calls at current
   volume, cached 10 min). Fine at tens of thousands; swap for `GetBucket`
   `approximateSize` with instance principals if the object count ever explodes.
+- **A PAR cannot delete objects.** Oracle's own security design: a leaked URL
+  can never destroy data. So the upload route asks the gate *before* storing
+  bytes rather than storing and cleaning up after. Housekeeping deletes need
+  the console or the CLI, not the app.
 - **The PAR is a long-lived bearer secret.** It is server-side only, scoped to
   one bucket, and cannot list the tenancy. The zero-secret alternative is
   instance principals with signed REST calls — ~80 lines of crypto plus token

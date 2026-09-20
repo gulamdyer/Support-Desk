@@ -516,9 +516,16 @@ app.post('/api/chats/:id/media', wrap(async (req, res) => {
     return res.status(413).json({ error: `File is too large (max ${MAX_UPLOAD_MB} MB).` });
   }
 
-  const stored = await saveMedia(path.join(MEDIA_DIR, `${randomBytes(4).toString('hex')}-${safeName}`), buf);
-
+  // Ask the gate BEFORE the bytes go anywhere. A PAR cannot delete objects, so
+  // storing first and cleaning up after would strand an orphan in the bucket
+  // every time a file is refused. Passing null for the path does not weaken the
+  // duplicate-attachment rule: this upload's name is freshly random and could
+  // never match an earlier send, and queueMedia re-runs the full check with the
+  // real path a moment later.
+  let stored = null;
   try {
+    checkOutbound(chat.id, req.body?.caption, now(), true, null);
+    stored = await saveMedia(path.join(MEDIA_DIR, `${randomBytes(4).toString('hex')}-${safeName}`), buf);
     const msg = queueMedia(chat.id, req.body?.caption, req.user.id, {
       mediaType: kindOf(ext), mediaPath: stored, replyTo: req.body?.replyTo || null,
     });
@@ -527,7 +534,7 @@ app.post('/api/chats/:id/media', wrap(async (req, res) => {
     broadcast({ type: 'chats' });
     res.json({ message: msg });
   } catch (err) {
-    await removeMedia(stored); // rejected by the gate — do not leave the file behind
+    if (stored) await removeMedia(stored); // only the rare race: gate refused after the bytes landed
     if (err instanceof GateError) return res.status(422).json({ error: err.message });
     throw err;
   }
