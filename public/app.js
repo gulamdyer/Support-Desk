@@ -1244,6 +1244,22 @@ $('jumpBtn').onclick = async () => {
 };
 
 // --- list filters --------------------------------------------------------
+// The filter row scrolls sideways with its scrollbar hidden, so a plain mouse
+// has no way to reach whatever sits past the edge — a vertical wheel does
+// nothing on a horizontal overflow. Map one onto the other. A real sideways
+// gesture is left alone, and at either end the event is not swallowed, so the
+// page keeps scrolling instead of the pointer feeling stuck.
+const catRow = document.querySelector('.cats');
+catRow?.addEventListener('wheel', (e) => {
+  if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+  const max = catRow.scrollWidth - catRow.clientWidth;
+  if (max <= 0) return;
+  const next = Math.min(max, Math.max(0, catRow.scrollLeft + e.deltaY));
+  if (next === catRow.scrollLeft) return;
+  e.preventDefault();
+  catRow.scrollLeft = next;
+}, { passive: false });
+
 document.querySelectorAll('.cats .chip').forEach((c) => {
   c.onclick = () => {
     document.querySelectorAll('.cats .chip').forEach((x) => x.classList.toggle('on', x === c));
