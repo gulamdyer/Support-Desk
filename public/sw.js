@@ -54,7 +54,13 @@ self.addEventListener('fetch', (e) => {
   e.respondWith(
     fetch(request).then((res) => {
       if (res.ok) {
-        caches.open(CACHE).then((c) => c.put(request, res.clone()));
+        // Clone before returning, not inside the callback. caches.open() is
+        // async, so by the time its .then() ran the browser was already
+        // consuming the body and clone() threw "Response body is already
+        // used" — every put failed, nothing was ever cached at runtime, and
+        // the offline fallback this file exists for quietly did nothing.
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(request, copy));
         return res;
       }
       return caches.match(request).then((c) => c || res);
