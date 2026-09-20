@@ -116,13 +116,26 @@ echo hello > /tmp/par-test.txt
 curl -sf -X PUT -T /tmp/par-test.txt "${MEDIA_PAR}par-test.txt" && echo "write OK"
 curl -sf "${MEDIA_PAR}par-test.txt"                             && echo "read OK"
 curl -sf "${MEDIA_PAR}?fields=name,size&limit=1" >/dev/null     && echo "listing OK"
+
+# Backups live under a prefix, and object names are URL-encoded, so a slash
+# arrives as %2F. Confirm the bucket turns it back into a real one:
+curl -sf -X PUT -T /tmp/par-test.txt "${MEDIA_PAR}backups%2Fprobe.txt" >/dev/null
+curl -sf "${MEDIA_PAR}?prefix=backups/&fields=name"
 ```
 
-All three must print OK. There is deliberately no DELETE here: a PAR cannot
-delete objects. Remove the test file with the console or the CLI:
+The first three must print OK, and the last must come back naming
+`backups/probe.txt` — a real slash, not `backups%2Fprobe.txt`. That one line
+decides two things: whether backups land in their own prefix at all, and
+whether `ociUsage` can tell them apart from attachments. If it came back
+encoded, the attachment total you bill against would climb by one every night.
+
+There is deliberately no DELETE here: a PAR cannot delete objects. Clear both
+test objects from the console — Bucket → Objects → select → Delete — or with
+the CLI if you installed it:
 
 ```bash
 oci os object delete -bn wa-media --object-name par-test.txt --auth instance_principal
+oci os object delete -bn wa-media --object-name backups/probe.txt --auth instance_principal
 ```
 
 ### 4. Backfill
