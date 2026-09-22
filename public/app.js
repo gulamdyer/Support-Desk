@@ -417,7 +417,9 @@ function resetImg() {
 /** Save the angle so the next person sees it straight too. Best effort — a
  *  failed save must not stop the agent reading the document in front of them. */
 function rememberRotation() {
-  if (!viewingId) return;
+  // Not while a flattened card is on screen: that is a picture made here, and
+  // its angle has nothing to do with how the photo behind it should be shown.
+  if (!viewingId || flatFrom) return;
   api(`/api/messages/${encodeURIComponent(viewingId)}/rotation`, { deg: spin }).catch(() => {});
 }
 
@@ -808,7 +810,15 @@ document.addEventListener('keydown', (e) => {
   if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
   if (e.key === '+' || e.key === '=') { e.preventDefault(); setZoom(zoom * 1.4); }
   if (e.key === '-' || e.key === '_') { e.preventDefault(); setZoom(zoom / 1.4); }
-  if (e.key.toLowerCase() === 'r') { spin = (spin + 90) % 360; applyImgTransform(); }
+  // The same turn as the button, saved the same way — a rotation that sticks
+  // only when it was made with the mouse is the sort of difference nobody can
+  // explain later.
+  if (e.key.toLowerCase() === 'r') {
+    spin = (spin + 90) % 360;
+    clampPan();
+    applyImgTransform();
+    rememberRotation();
+  }
   if (e.key === '0') resetImg();
 });
 
