@@ -2139,7 +2139,7 @@ function cloudView(d) {
   const pct = pctOf(d.mediaBytes, d.quotaBytes);
   const diskPct = d.total ? Math.round((d.used / d.total) * 100) : 0;
   return `
-    <div class="store-sec"><span>Cloud storage · OCI Dubai</span></div>
+    <div class="store-sec"><span>Cloud storage</span></div>
     ${d.quotaBytes
       ? bar(pct, `${big(d.mediaBytes)} of ${big(d.quotaBytes)} allocated · ${big(Math.max(0, d.quotaBytes - d.mediaBytes))} free`)
       : `<p class="hint">${big(d.mediaBytes)} stored · no allocation set</p>`}
