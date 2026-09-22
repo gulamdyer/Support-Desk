@@ -368,11 +368,21 @@ function fitScale() {
 }
 
 function applyImgTransform() {
+  const img = $('imgView');
   const scale = fitScale() * zoom;
   // Read right to left: centre the image on the anchor, turn it, size it, then
   // move it. Anything else rotates or scales about a corner.
-  $('imgView').style.transform =
-    `translate(${panX}px, ${panY}px) scale(${scale}) rotate(${spin + tilt}deg) translate(-50%, -50%)`;
+  const place = `translate(${panX}px, ${panY}px) scale(${scale}) rotate(${spin + tilt}deg)`;
+  img.style.transform = `${place} translate(-50%, -50%)`;
+  // The corner marks take the same journey, so they stay on the spots they were
+  // put on through any zoom, pan or turn. Only the last step differs: a
+  // percentage is of the element's own box, and the marks layer has no size, so
+  // the image's half-width has to be spelled out in pixels. The dots then undo
+  // the scale for themselves, so a dot stays a dot instead of growing into a
+  // blob.
+  $('imgMarks').style.transform =
+    `${place} translate(${-img.naturalWidth / 2}px, ${-img.naturalHeight / 2}px)`;
+  $('imgMarks').style.setProperty('--k', 1 / scale);
   $('imgZoom').textContent = `${Math.round(zoom * 100)}%`;
 }
 /** Keep the picture reachable. Panning is allowed at any zoom — being told
@@ -424,6 +434,7 @@ function openImage(url, name, id, deg) {
   flatFrom = null;
   $('imgStraighten').setAttribute('aria-pressed', 'false');
   $('imgFlatten').setAttribute('aria-pressed', 'false');
+  setMarking(false);
   $('imgView').src = url;
   $('imgModal').hidden = false;
   applyImgTransform();
@@ -435,6 +446,7 @@ $('imgView').addEventListener('load', applyImgTransform);
 window.addEventListener('resize', () => { if (!$('imgModal').hidden) applyImgTransform(); });
 const closeImage = () => {
   $('imgModal').hidden = true; $('imgView').src = ''; viewingId = null; flatFrom = null;
+  setMarking(false);
   pointers.clear();
 };
 
@@ -574,7 +586,13 @@ function flattenCard(img) {
   if (!quad) return null;
 
   const k = img.naturalWidth / W;
-  const src = quad.map(([x, y]) => [x * k, y * k]);
+  return warpQuad(img, quad.map(([x, y]) => [x * k, y * k]));
+}
+
+/** Redraw the quadrilateral `src` — four corners of the picture's own pixels,
+ *  clockwise from the top left — as a front-on rectangle. Returns a data URL,
+ *  or null if those four points cannot make one. */
+function warpQuad(img, src) {
   const len = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
   const wide = (len(src[0], src[1]) + len(src[3], src[2])) / 2;
   const tall = (len(src[0], src[3]) + len(src[1], src[2])) / 2;
@@ -587,12 +605,18 @@ function flattenCard(img) {
   const shape = measured > 1.2 && measured < 2.4 ? CARD_RATIO
     : measured > 1 / 2.4 && measured < 1 / 1.2 ? 1 / CARD_RATIO
     : measured;
-  // A card 1600 pixels across is already more than can be read on any screen
-  // here, and a modern phone photo would otherwise produce a redrawn image of
-  // tens of megabytes to hold in memory.
-  const out = { w: Math.min(1600, Math.round(wide)), h: 0 };
-  out.h = Math.round(out.w / shape);
-  if (out.w < 40 || out.h < 40) return null;
+  // 1600 pixels is already more than can be read on any screen here, and a
+  // modern phone photo would otherwise produce a redrawn image of tens of
+  // megabytes to hold in memory. Both sides are held to it, not just the
+  // width: corners marked by hand can describe a long thin sliver, and capping
+  // only the width would then ask the browser for a canvas thousands of pixels
+  // tall.
+  const out = { w: Math.round(wide), h: Math.round(wide / shape) };
+  const fit = Math.min(1, 1600 / Math.max(out.w, out.h));
+  out.w = Math.round(out.w * fit); out.h = Math.round(out.h * fit);
+  // Written the positive way round: four points on top of each other make the
+  // shape NaN, and NaN is not less than 40.
+  if (!(out.w >= 40 && out.h >= 40)) return null;
 
   const inv = homography([[0, 0], [out.w, 0], [out.w, out.h], [0, out.h]], src);
   if (!inv) return null;
@@ -631,21 +655,83 @@ function flattenCard(img) {
   return dest.toDataURL('image/jpeg', 0.92);   // the source was a photo; PNG only bloats it
 }
 
+/** Where a point of the picture sits on the screen, and back again.
+ *
+ *  The image is laid out at its natural size and anchored to the stage centre
+ *  with `transform-origin: 0 0`, so its own coordinates ARE the photo's pixels
+ *  and the computed transform is the whole story — zoom, pan, rotation and
+ *  tilt included, whatever the viewer is currently doing.
+ */
+function imgSpace() {
+  const img = $('imgView'), r = $('imgStage').getBoundingClientRect();
+  return new DOMMatrix()
+    .translateSelf(r.left + img.offsetLeft, r.top + img.offsetTop)
+    .multiplySelf(new DOMMatrix(getComputedStyle(img).transform));
+}
+
+// Marking the corners by hand. The detector is good on a card that stands out
+// from what it is lying on and honest when it cannot find one, but "honest no"
+// is still no picture — so the four corners can simply be pointed at.
+let marking = false, marks = [], tapFrom = null;
+
+function drawMarks() {
+  $('imgMarks').innerHTML = marks.map(([x, y]) => `<i style="left:${x}px;top:${y}px"></i>`).join('');
+}
+function setMarking(on) {
+  marking = on;
+  marks = [];
+  drawMarks();
+  $('imgCorners').setAttribute('aria-pressed', String(on));
+  $('imgStage').classList.toggle('marking', on);
+}
+
+$('imgCorners').onclick = () => {
+  if (marking) return setMarking(false);
+  if (!$('imgView').naturalWidth || typeof orderCorners !== 'function') return;
+  setMarking(true);
+  toast('Tap the four corners of the card.');
+};
+
+/** Flatten onto the four points just tapped. */
+function flattenMarked() {
+  const img = $('imgView');
+  // Ordered as they look on SCREEN, not in the file: the person marked the
+  // corners of the card the way up they can see it, and that is the way up it
+  // should come out — the photo may be being shown rotated.
+  const m = imgSpace();
+  const seen = marks.map(([x, y]) => { const p = m.transformPoint({ x, y }); return [p.x, p.y]; });
+  const quad = orderCorners(seen);
+  const src = quad.map((p) => marks[seen.indexOf(p)]);   // the same points, back in the photo
+  let flat = null;
+  try { flat = warpQuad(img, src); } catch { flat = null; }
+  setMarking(false);
+  if (!flat) return toast('Those four points do not make a card shape.');
+  if (!flatFrom) flatFrom = { src: img.src, spin };
+  spin = 0;                              // it now stands the way it was marked
+  $('imgFlatten').setAttribute('aria-pressed', 'true');   // and that button puts the photo back
+  resetImg();
+  img.src = flat;
+}
+
 $('imgFlatten').onclick = () => {
+  // Either branch swaps the picture underneath, and a corner marked on the old
+  // one means nothing on the new one.
+  setMarking(false);
   if (flatFrom) {                        // second tap puts the photo back
-    const src = flatFrom;
+    const was = flatFrom;
     flatFrom = null;
     $('imgFlatten').setAttribute('aria-pressed', 'false');
+    spin = was.spin;
     resetImg();
-    $('imgView').src = src;
+    $('imgView').src = was.src;
     return;
   }
   const img = $('imgView');
   if (!img.naturalWidth) return;
   let flat = null;
   try { flat = flattenCard(img); } catch { flat = null; }
-  if (!flat) return toast('No card found in this photo — try the straighten button.');
-  flatFrom = img.src;
+  if (!flat) return toast('No card found — mark its four corners instead.');
+  flatFrom = { src: img.src, spin };
   $('imgFlatten').setAttribute('aria-pressed', 'true');
   resetImg();                            // the new picture needs its own fit
   img.src = flat;
@@ -659,11 +745,27 @@ $('imgStage').addEventListener('wheel', (e) => {
   e.preventDefault();
   setZoom(zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12));
 }, { passive: false });
-$('imgStage').addEventListener('dblclick', () => setZoom(zoom > 1 ? 1 : 2.5));
+$('imgStage').addEventListener('dblclick', () => { if (!marking) setZoom(zoom > 1 ? 1 : 2.5); });
+
+// A tap while marking drops a corner; the fourth one flattens. A drag is a pan
+// and must not leave a dot behind, so the press has to have gone nowhere.
+$('imgStage').addEventListener('click', (e) => {
+  if (!marking || !tapFrom || marks.length >= 4) return;
+  if (Math.hypot(e.clientX - tapFrom.x, e.clientY - tapFrom.y) > 6) return;
+  const img = $('imgView');
+  const p = imgSpace().inverse().transformPoint({ x: e.clientX, y: e.clientY });
+  // A corner of the card can sit right on the edge of the photo, and a tap
+  // just past it would otherwise pull black in from outside the picture.
+  marks.push([Math.max(0, Math.min(img.naturalWidth, p.x)),
+              Math.max(0, Math.min(img.naturalHeight, p.y))]);
+  drawMarks();
+  if (marks.length === 4) flattenMarked();
+});
 
 // One finger pans, two fingers pinch. Pointer events cover mouse, trackpad and
 // touch with the same code, which is the only reason this stays short.
 $('imgStage').addEventListener('pointerdown', (e) => {
+  tapFrom = { x: e.clientX, y: e.clientY };
   $('imgStage').setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   $('imgStage').classList.add('panning');

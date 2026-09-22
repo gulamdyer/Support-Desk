@@ -316,7 +316,11 @@ button { font: inherit; cursor: pointer; }
 /* --- image viewer --- */
 .img-sheet { width: min(96vw, 1200px); height: min(92vh, 1000px);
   max-width: none; max-height: 92vh; display: flex; flex-direction: column; }
-.img-tools { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+/* Nine buttons and a percentage do not fit across a small phone. Let the row
+   wrap onto a second line rather than push itself off the edge of the sheet,
+   where the last tools cannot be reached at all. */
+.img-tools { display: flex; align-items: center; justify-content: flex-end;
+  gap: 4px; flex: 0 1 auto; flex-wrap: wrap; }
 .img-zoom { font-size: 12px; color: var(--muted); min-width: 46px; text-align: center;
   font-variant-numeric: tabular-nums; }
 .img-stage { flex: 1; min-width: 0; min-height: 0; position: relative; overflow: hidden;
@@ -330,12 +334,20 @@ button { font: inherit; cursor: pointer; }
    `margin:auto` cannot do this: for an absolutely positioned element LARGER
    than its container the auto margins collapse asymmetrically, which parked a
    2400px photo outside the clip region entirely. */
-#imgView { position: absolute; left: 50%; top: 50%; transform-origin: 0 0;
+#imgView, #imgMarks { position: absolute; left: 50%; top: 50%; transform-origin: 0 0;
   max-width: none; max-height: none;
   transition: transform .12s ease-out; user-select: none; -webkit-user-drag: none; }
+/* The corner marks share the image's anchor and its transform, so a mark is
+   simply placed at its pixel in the photo and rides along. Zero-sized, because
+   only the children are ever seen. */
+#imgMarks { width: 0; height: 0; pointer-events: none; }
+#imgMarks i { position: absolute; width: calc(13px * var(--k, 1)); height: calc(13px * var(--k, 1));
+  border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 calc(2px * var(--k, 1)) #fff;
+  transform: translate(-50%, -50%); }
+.img-stage.marking { cursor: crosshair; }
 #imgView.enhanced { filter: contrast(1.35) brightness(1.06) saturate(.85); }
 .icon-btn[aria-pressed="true"] { color: var(--accent); }
-.img-stage.panning #imgView { transition: none; }
+.img-stage.panning #imgView, .img-stage.panning #imgMarks { transition: none; }
 
 /* --- document card + viewer --- */
 .doc { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 320px;

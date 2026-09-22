@@ -245,8 +245,10 @@ export function findCard(greyRaw, W, H) {
         if (hit) pts.push(hit);
       }
       if (pts.length < 4) continue;
-      const quad = orderCorners(pts, W, H);
-      if (!quad) continue;
+      const quad = orderCorners(pts);
+      // A quadrilateral that folds over itself, or one that covers almost none
+      // of the picture, is a bad read rather than a small card.
+      if (!quad || quad.area < W * H * 0.12) continue;
       if (best && quad.area <= best.area) continue;   // could not win; do not score it
       let sum = 0, ok = true;
       for (let n = 0; n < 4 && ok; n += 1) {
@@ -260,8 +262,10 @@ export function findCard(greyRaw, W, H) {
   return best;
 }
 
-/** Clockwise from the top left, so the destination rectangle lines up. */
-function orderCorners(pts, W, H) {
+/** Clockwise from the top left, so the destination rectangle lines up. Also
+ *  used on corners marked by hand, where the order they were tapped in says
+ *  nothing. */
+export function orderCorners(pts) {
   const cx = pts.reduce((s, p) => s + p[0], 0) / 4;
   const cy = pts.reduce((s, p) => s + p[1], 0) / 4;
   const sorted = [...pts].sort((p, q) =>
@@ -274,14 +278,10 @@ function orderCorners(pts, W, H) {
     if (d < near) { near = d; start = i; }
   }
   const out = [0, 1, 2, 3].map((i) => sorted[(start + i) % 4]);
-  // A quadrilateral that folds over itself, or one that covers almost none of
-  // the picture, is a bad read rather than a small card.
-  const area = Math.abs(out.reduce((s, p, i) => {
+  out.area = Math.abs(out.reduce((s, p, i) => {
     const q = out[(i + 1) % 4];
     return s + p[0] * q[1] - q[0] * p[1];
   }, 0)) / 2;
-  if (area < W * H * 0.12) return null;
-  out.area = area;
   return out;
 }
 
@@ -311,4 +311,4 @@ export function homography(src, dst) {
 }
 
 // app.js is a plain script and cannot import; hand it the two entry points.
-if (typeof window !== 'undefined') Object.assign(window, { findCard, homography });
+if (typeof window !== 'undefined') Object.assign(window, { findCard, homography, orderCorners });

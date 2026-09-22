@@ -7,7 +7,7 @@
  *  the mistake this is really guarding against.
  */
 import assert from 'node:assert';
-import { findCard, homography } from '../public/flatten.js';
+import { findCard, homography, orderCorners } from '../public/flatten.js';
 
 const W = 720, H = 400;
 // A card seen from below and to the right: the far side smaller, the sides
@@ -93,6 +93,16 @@ check('noise alone is refused', () => {
     noise[i] = (seed % 256);
   }
   assert.equal(findCard(noise, W, H), null);
+});
+
+// Corners marked by hand arrive in whatever order they were tapped, and the
+// destination rectangle only lines up if they are put back clockwise from the
+// top left.
+check('tapped corners are sorted, whichever order they came in', () => {
+  for (const order of [[2, 0, 3, 1], [3, 2, 1, 0], [1, 3, 0, 2]]) {
+    const given = order.map((i) => CORNERS[i]);
+    assert.deepEqual([...orderCorners(given)], CORNERS, `from ${JSON.stringify(order)}`);
+  }
 });
 
 console.log(`✅ flatten: ${n}/${n} — a slanted card is found and squared up`);
